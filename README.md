@@ -24,4 +24,4 @@ npm run prisma:migrate
 
 ## Repo history
 
-This repo was split out from the main [BitBlockIT-CRM](https://github.com/your-org/BitBlockIT-CRM) monorepo. The original backend lived at `BitBlockIT-CRM/backend/`.
+This repo was split out from the main BitBlockIT-CRM monorepo. The original backend lived at `BitBlockIT-CRM/backend/`.
