@@ -32,9 +32,20 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+  const allowedOrigins = (process.env.FRONTEND_URL || process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const defaultOrigins = ['http://localhost:3000', 'https://crm.bitblockit.com'];
+  const origins = [...new Set([...defaultOrigins, ...allowedOrigins])];
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: origins.length === 1 ? origins[0] : (origin, cb) => {
+      if (!origin || origins.includes(origin)) cb(null, true);
+      else cb(null, false);
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   });
 
   if (!isProd) {
