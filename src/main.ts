@@ -39,13 +39,23 @@ async function bootstrap() {
   const defaultOrigins = ['http://localhost:3000', 'https://crm.bitblockit.com'];
   const origins = [...new Set([...defaultOrigins, ...allowedOrigins])];
   app.enableCors({
-    origin: origins.length === 1 ? origins[0] : (origin, cb) => {
-      if (!origin || origins.includes(origin)) cb(null, true);
-      else cb(null, false);
+    origin: (origin, cb) => {
+      // Allow requests with no origin (e.g. same-origin, Postman, server-to-server)
+      if (!origin) {
+        cb(null, true);
+        return;
+      }
+      if (origins.includes(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    optionsSuccessStatus: 204,
+    preflightContinue: false,
   });
 
   if (!isProd) {
