@@ -1,0 +1,4 @@
+ALTER TABLE "forms" ADD COLUMN IF NOT EXISTS "webhook_url" TEXT;
+ALTER TABLE "forms" ADD COLUMN IF NOT EXISTS "tag_ids" JSONB;
+ALTER TABLE "forms" ADD COLUMN IF NOT EXISTS "embed_allowlist" JSONB;
+ALTER TABLE "forms" ADD COLUMN IF NOT EXISTS "progressive_config" JSONB;

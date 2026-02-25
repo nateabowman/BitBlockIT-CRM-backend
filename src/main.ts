@@ -1,0 +1,89 @@
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
+import * as express from 'express';
+import { AppModule } from './app.module';
+import { LoggerService } from './common/logger.service';
+import { MetricsService } from './common/metrics.service';
+
+async function bootstrap() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret || (isProd && jwtSecret.length < 32)) {
+    throw new Error('JWT_SECRET must be set (min 32 chars in production). Generate with: openssl rand -base64 32');
+  }
+
+  const app = await NestFactory.create(AppModule);
+  // Twilio webhooks: capture raw body for signature validation (must run before global body parser)
+  const twilioVerify = (req: express.Request, _res: express.Response, buf: Buffer) => {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+  };
+  app.use('/api/v1/twilio/voice/status', express.urlencoded({ verify: twilioVerify, extended: false }));
+  app.use('/api/v1/twilio/voice/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
+  app.use('/api/v1/twilio/sms/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
+  app.use(helmet());
+  app.useLogger(app.get(LoggerService));
+  app.setGlobalPrefix('api/v1');
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  });
+
+  if (!isProd) {
+    const config = new DocumentBuilder()
+      .setTitle('BitBlockIT CRM API')
+      .setDescription('REST API for BitBlockIT CRM. Use **Authorize** to set a JWT bearer token for authenticated endpoints.')
+      .setVersion('1.0')
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT', name: 'Authorization', in: 'header' })
+      .addTag('auth', 'Login, register, password reset')
+      .addTag('leads', 'Lead CRUD and pipeline')
+      .addTag('organizations', 'Organizations')
+      .addTag('contacts', 'Contacts')
+      .addTag('pipelines', 'Pipelines and stages')
+      .addTag('activities', 'Activities and tasks')
+      .addTag('reports', 'Analytics and reports')
+      .addTag('webhooks', 'Inbound (Zapier) and outbound webhook subscriptions')
+      .addTag('apollo', 'Apollo.io enrichment, search, sequences, deals')
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api-docs', app, document, {
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
+
+  const http = app.getHttpAdapter().getInstance();
+  http.get('/health', (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
+    res.status(200).send({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  const metricsSecret = process.env.METRICS_SECRET;
+  const metricsService = app.get(MetricsService);
+  http.get('/metrics', async (req: { headers?: { 'x-metrics-token'?: string; authorization?: string } }, res: { setHeader: (k: string, v: string) => void; status: (n: number) => { send: (s: string) => void }; send: (s: string) => void }) => {
+    if (metricsSecret) {
+      const token = req.headers?.['x-metrics-token'] ?? req.headers?.authorization?.replace(/^Bearer\s+/i, '').trim();
+      if (token !== metricsSecret) {
+        res.status(401).send('Unauthorized');
+        return;
+      }
+    }
+    res.setHeader('Content-Type', metricsService.getContentType());
+    res.status(200).send(await metricsService.getMetrics());
+  });
+
+  const port = process.env.PORT || 3001;
+  await app.listen(port);
+  const logger = app.get(LoggerService);
+  logger.log(`Backend running at http://localhost:${port}/api/v1`, 'Bootstrap');
+  if (!isProd) logger.log(`API docs at http://localhost:${port}/api-docs`, 'Bootstrap');
+  logger.log(`Health check at http://localhost:${port}/health`, 'Bootstrap');
+  logger.log(`Metrics at http://localhost:${port}/metrics${metricsSecret ? ' (requires x-metrics-token)' : ''}`, 'Bootstrap');
+}
+bootstrap();
