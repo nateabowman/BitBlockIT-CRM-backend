@@ -227,6 +227,10 @@ export class TwilioService {
     };
   }
 
+  /** Safe TwiML when connect fails so Twilio does not play "An application error has occurred". */
+  private static readonly CONNECT_ERROR_TWIML =
+    '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">We could not connect your call. Please try again.</Say><Hangup/></Response>';
+
   /** Generate TwiML to dial the lead's primary contact or manual number (used when agent answers). */
   async getConnectTwiML(token: string): Promise<string> {
     const decoded = this.verifyConnectTokenOrManual(token);
@@ -235,19 +239,23 @@ export class TwilioService {
       const toEscaped = decoded.to.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       return `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${callerId}">${toEscaped}</Dial></Response>`;
     }
-    const lead = await this.prisma.lead.findFirst({
-      where: { id: decoded.leadId, deletedAt: null },
-      include: { primaryContact: true },
-    });
-    if (!lead?.primaryContact?.phone) {
-      return '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Contact phone not found.</Say><Hangup/></Response>';
+    try {
+      const lead = await this.prisma.lead.findFirst({
+        where: { id: decoded.leadId, deletedAt: null },
+        include: { primaryContact: true },
+      });
+      if (!lead?.primaryContact?.phone) {
+        return '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Contact phone not found.</Say><Hangup/></Response>';
+      }
+      const to = normalizePhone(lead.primaryContact.phone);
+      if (!to) {
+        return '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Invalid contact number.</Say><Hangup/></Response>';
+      }
+      const toEscaped = to.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${callerId}">${toEscaped}</Dial></Response>`;
+    } catch {
+      return TwilioService.CONNECT_ERROR_TWIML;
     }
-    const to = normalizePhone(lead.primaryContact.phone);
-    if (!to) {
-      return '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Invalid contact number.</Say><Hangup/></Response>';
-    }
-    const toEscaped = to.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${callerId}">${toEscaped}</Dial></Response>`;
   }
 
   /** Handle call status callback from Twilio (completed). */

@@ -11,6 +11,7 @@ import {
   UseGuards,
   UnauthorizedException,
   Headers,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
@@ -35,6 +36,8 @@ const VOICE_CONNECT_ERROR_TWIML =
 @ApiTags('twilio')
 @Controller('twilio')
 export class TwilioController {
+  private readonly logger = new Logger(TwilioController.name);
+
   constructor(private twilio: TwilioService) {}
 
   @Get('status')
@@ -79,6 +82,14 @@ export class TwilioController {
     @Query('token') token: string,
     @Res() res: Response,
   ) {
+    const sendSafe = () => {
+      if (res.headersSent) return;
+      try {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(VOICE_CONNECT_ERROR_TWIML);
+      } catch {
+        this.logger.error('Failed to send VOICE_CONNECT_ERROR_TWIML (response may already be sent)');
+      }
+    };
     try {
       if (!token) {
         res.status(200).setHeader('Content-Type', 'text/xml').send(
@@ -87,10 +98,12 @@ export class TwilioController {
         return;
       }
       const twiml = await this.twilio.getConnectTwiML(token);
+      if (res.headersSent) return;
       res.setHeader('Content-Type', 'text/xml');
       res.status(200).send(twiml);
-    } catch {
-      res.status(200).setHeader('Content-Type', 'text/xml').send(VOICE_CONNECT_ERROR_TWIML);
+    } catch (err) {
+      this.logger.warn(`voice/connect error: ${err instanceof Error ? err.message : String(err)}`);
+      sendSafe();
     }
   }
 
