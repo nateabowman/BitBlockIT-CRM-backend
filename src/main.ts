@@ -46,14 +46,23 @@ async function bootstrap() {
         return;
       }
       if (origins.includes(origin)) {
-        cb(null, true);
+        // Return the actual origin so Access-Control-Allow-Origin is set correctly (required for credentials)
+        cb(null, origin);
         return;
       }
       cb(null, false);
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'Accept-Language',
+    ],
+    exposedHeaders: ['Content-Type', 'Authorization'],
     optionsSuccessStatus: 204,
     preflightContinue: false,
   });
