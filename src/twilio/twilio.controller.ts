@@ -28,6 +28,10 @@ interface RequestWithRawBody extends Request {
   rawBody?: Buffer;
 }
 
+/** Safe TwiML so we never return 5xx to Twilio (avoids "An application error has occurred"). */
+const VOICE_CONNECT_ERROR_TWIML =
+  '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">We could not connect your call. Please try again.</Say><Hangup/></Response>';
+
 @ApiTags('twilio')
 @Controller('twilio')
 export class TwilioController {
@@ -75,15 +79,19 @@ export class TwilioController {
     @Query('token') token: string,
     @Res() res: Response,
   ) {
-    if (!token) {
-      res.status(400).type('text/xml').send(
-        '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Missing token.</Say><Hangup/></Response>',
-      );
-      return;
+    try {
+      if (!token) {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Missing token. Goodbye.</Say><Hangup/></Response>',
+        );
+        return;
+      }
+      const twiml = await this.twilio.getConnectTwiML(token);
+      res.setHeader('Content-Type', 'text/xml');
+      res.status(200).send(twiml);
+    } catch {
+      res.status(200).setHeader('Content-Type', 'text/xml').send(VOICE_CONNECT_ERROR_TWIML);
     }
-    const twiml = await this.twilio.getConnectTwiML(token);
-    res.setHeader('Content-Type', 'text/xml');
-    res.send(twiml);
   }
 
   @Get('call-records')
@@ -133,24 +141,35 @@ export class TwilioController {
     @Headers('x-twilio-signature') signature: string,
     @Body() body: Record<string, string>,
   ) {
-    if (!signature) {
-      res.status(401).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Unauthorized.</Say><Hangup/></Response>');
-      return;
+    const safeTwiml =
+      '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">We are sorry, something went wrong. Please try again later.</Say><Hangup/></Response>';
+    try {
+      if (!signature) {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Goodbye.</Say><Hangup/></Response>',
+        );
+        return;
+      }
+      const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+      const valid = this.twilio.validateRequest(signature, url, body);
+      if (!valid) {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Goodbye.</Say><Hangup/></Response>',
+        );
+        return;
+      }
+      const twiml = await this.twilio.handleInboundVoice({
+        CallSid: body.CallSid ?? '',
+        From: body.From ?? '',
+        To: body.To ?? '',
+        CallStatus: body.CallStatus,
+      });
+      res.setHeader('Content-Type', 'text/xml');
+      res.status(200).send(twiml);
+    } catch {
+      res.setHeader('Content-Type', 'text/xml');
+      res.status(200).send(safeTwiml);
     }
-    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    const valid = this.twilio.validateRequest(signature, url, body);
-    if (!valid) {
-      res.status(401).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response><Say>Invalid signature.</Say><Hangup/></Response>');
-      return;
-    }
-    const twiml = await this.twilio.handleInboundVoice({
-      CallSid: body.CallSid ?? '',
-      From: body.From ?? '',
-      To: body.To ?? '',
-      CallStatus: body.CallStatus,
-    });
-    res.setHeader('Content-Type', 'text/xml');
-    res.send(twiml);
   }
 
   @Post('voice/status')
