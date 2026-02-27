@@ -75,13 +75,11 @@ export class TwilioController {
     return { data: result };
   }
 
-  @Get('voice/connect')
-  @Public()
-  @ApiOperation({ summary: 'TwiML: dial lead contact when agent answers (no auth)' })
-  async voiceConnect(
-    @Query('token') token: string,
-    @Res() res: Response,
-  ) {
+  /** TwiML for voice/connect: token from query (GET) or body (POST). Twilio may use either method. */
+  private async voiceConnectHandler(
+    token: string | undefined,
+    res: Response,
+  ): Promise<void> {
     const sendSafe = () => {
       if (res.headersSent) return;
       try {
@@ -105,6 +103,28 @@ export class TwilioController {
       this.logger.warn(`voice/connect error: ${err instanceof Error ? err.message : String(err)}`);
       sendSafe();
     }
+  }
+
+  @Get('voice/connect')
+  @Public()
+  @ApiOperation({ summary: 'TwiML: dial lead contact when agent answers (GET)' })
+  async voiceConnectGet(
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    await this.voiceConnectHandler(token, res);
+  }
+
+  @Post('voice/connect')
+  @Public()
+  @ApiOperation({ summary: 'TwiML: dial lead contact when agent answers (POST – Twilio may use POST)' })
+  async voiceConnectPost(
+    @Query('token') tokenFromQuery: string | undefined,
+    @Body() body: Record<string, string>,
+    @Res() res: Response,
+  ) {
+    const token = tokenFromQuery ?? body?.token;
+    await this.voiceConnectHandler(token, res);
   }
 
   @Get('call-records')

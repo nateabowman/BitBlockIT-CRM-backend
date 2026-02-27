@@ -8,7 +8,7 @@ When you hear **"An application error has occurred"** on a click-to-call, Twilio
 
 1. User clicks "Call" on a lead → CRM backend calls Twilio to ring the agent's phone
 2. Agent answers their phone
-3. **Twilio fetches** `GET {TWILIO_STATUS_CALLBACK_BASE_URL}/api/v1/twilio/voice/connect?token=...`
+3. **Twilio fetches** `GET` or `POST` `{TWILIO_STATUS_CALLBACK_BASE_URL}/api/v1/twilio/voice/connect?token=...`
 4. Your backend returns TwiML that tells Twilio to dial the lead's number
 5. Lead's phone rings; agent and lead are connected
 
@@ -77,30 +77,65 @@ curl -s -o /dev/null -w "%{http_code}" "$BASE/api/v1/twilio/voice/connect?token=
 
 ---
 
-## Step 4: Check Reverse Proxy / Load Balancer
+## Step 4: 502 Bad Gateway from nginx (Very Common)
 
-If you use nginx, Apache, Cloudflare, or a load balancer:
+If Twilio logs show **502 Bad Gateway** with `nginx/1.x` in the response body, the failure is between **nginx** and your **Node.js backend**—not from your app returning 5xx.
 
-- **502 Bad Gateway** → Upstream (your NestJS app) errored or closed the connection
-- **503 Service Unavailable** → Backend not responding or overloaded
-- **504 Gateway Timeout** → Backend too slow (increase timeout for webhook requests)
+### What 502 means
 
-### Example: nginx timeout
+- Nginx could not get a valid response from the upstream (your NestJS app).
+- Common causes: upstream not running, upstream crashed, upstream too slow (timeout), or wrong upstream address/port.
+
+### What to do
+
+1. **Confirm the backend is running**  
+   On the server: `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:PORT/health` (use your app port). Expect 200.
+
+2. **Check nginx error log** (often `/var/log/nginx/error.log`):
+   - `connect() failed (111: Connection refused)` → Backend not listening on the port nginx uses.
+   - `upstream timed out` → Increase `proxy_read_timeout` (see below).
+   - `upstream prematurely closed connection` → Backend crashed or closed the connection during the request.
+
+3. **Raise timeouts for Twilio webhooks** so a slow DB or cold start doesn’t cause 502:
 
 ```nginx
 location /api/v1/twilio/ {
-    proxy_pass http://backend;
+    proxy_pass http://your_backend_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_connect_timeout 10s;
-    proxy_read_timeout 30s;   # Twilio expects response within ~15s
+    proxy_read_timeout 30s;   # Twilio expects response within ~15s; 30s gives headroom
     proxy_send_timeout 30s;
 }
 ```
+
+4. **Test from the server** (so traffic goes through the app, not nginx):
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3001/api/v1/twilio/voice/connect?token=test"
+   ```
+   Expect 200. If this works but Twilio still gets 502, the issue is nginx or network between Twilio and your server.
+
+5. **Twilio may use POST for voice/connect**  
+   The app supports both GET and POST. If you previously had only GET, adding POST support may resolve 502 if the failure was due to method handling.
+
+---
+
+## Step 5: Check Reverse Proxy / Load Balancer (General)
+
+If you use nginx, Apache, Cloudflare, or a load balancer:
+
+- **502 Bad Gateway** → See **Step 4** above (nginx ↔ backend).
+- **503 Service Unavailable** → Backend not responding or overloaded.
+- **504 Gateway Timeout** → Backend too slow; increase `proxy_read_timeout` (or equivalent).
 
 If you use **Cloudflare**, ensure the proxy is not blocking or timing out requests from Twilio.
 
 ---
 
-## Step 5: Check Backend Logs
+## Step 6: Check Backend Logs
 
 Look for errors around the time of the failed call:
 
@@ -123,7 +158,7 @@ You may see:
 
 ---
 
-## Step 6: Verify Agent and Lead Phone Numbers
+## Step 7: Verify Agent and Lead Phone Numbers
 
 Even if the webhook returns 200, bad phone data can cause failures:
 
@@ -133,7 +168,7 @@ Even if the webhook returns 200, bad phone data can cause failures:
 
 ---
 
-## Step 7: Checklist Summary
+## Step 8: Checklist Summary
 
 - [ ] `TWILIO_STATUS_CALLBACK_BASE_URL` is a **public** HTTPS URL
 - [ ] `curl` to `/api/v1/twilio/voice/connect` returns 200 (not 5xx)
@@ -150,7 +185,7 @@ Even if the webhook returns 200, bad phone data can cause failures:
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `{BASE}/health` | GET | Basic liveness check |
-| `{BASE}/api/v1/twilio/voice/connect?token=test` | GET | Voice connect (returns 200 with error TwiML for invalid token) |
+| `{BASE}/api/v1/twilio/voice/connect?token=test` | GET or POST | Voice connect (returns 200 with error TwiML for invalid token) |
 
 Replace `{BASE}` with your `TWILIO_STATUS_CALLBACK_BASE_URL`.
 

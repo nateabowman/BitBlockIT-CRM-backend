@@ -21,6 +21,7 @@ async function bootstrap() {
   };
   app.use('/api/v1/twilio/voice/status', express.urlencoded({ verify: twilioVerify, extended: false }));
   app.use('/api/v1/twilio/voice/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
+  app.use('/api/v1/twilio/voice/connect', express.urlencoded({ extended: false })); // POST from Twilio (no signature validation)
   app.use('/api/v1/twilio/sms/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
   app.use(helmet());
   app.useLogger(app.get(LoggerService));
