@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import * as express from 'express';
+import * as compression from 'compression';
 import { AppModule } from './app.module';
 import { LoggerService } from './common/logger.service';
 import { MetricsService } from './common/metrics.service';
@@ -23,7 +24,11 @@ async function bootstrap() {
   app.use('/api/v1/twilio/voice/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
   app.use('/api/v1/twilio/voice/connect', express.urlencoded({ extended: false })); // POST from Twilio (no signature validation)
   app.use('/api/v1/twilio/sms/incoming', express.urlencoded({ verify: twilioVerify, extended: false }));
-  app.use(helmet());
+  app.use(compression({ threshold: 1024 }));
+  app.use(helmet({
+    contentSecurityPolicy: isProd ? undefined : false,
+    crossOriginEmbedderPolicy: false,
+  }));
   app.useLogger(app.get(LoggerService));
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
@@ -37,7 +42,7 @@ async function bootstrap() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  const defaultOrigins = ['http://localhost:3000', 'https://crm.bitblockit.com'];
+  const defaultOrigins = ['http://localhost:3000', 'https://crm.bitblockit.com', 'https://bit-block-it-crm.vercel.app'];
   const origins = [...new Set([...defaultOrigins, ...allowedOrigins])];
   app.enableCors({
     origin: (origin, cb) => {
@@ -91,8 +96,16 @@ async function bootstrap() {
   }
 
   const http = app.getHttpAdapter().getInstance();
-  http.get('/health', (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
-    res.status(200).send({ status: 'ok', timestamp: new Date().toISOString() });
+  http.get('/health', async (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
+    const dbOk = await app.get('PrismaService')?.prisma?.$queryRaw`SELECT 1`.then(() => true).catch(() => false) ?? true;
+    res.status(200).send({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: Math.floor(process.uptime()),
+      db: dbOk ? 'connected' : 'error',
+      memory: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+      version: process.env.npm_package_version ?? '1.0.0',
+    });
   });
 
   const metricsSecret = process.env.METRICS_SECRET;

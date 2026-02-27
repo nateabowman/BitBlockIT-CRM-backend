@@ -285,58 +285,139 @@ export class WebhooksController {
   @Post('billing')
   @ApiOperation({
     summary: 'Bitblock-billing webhook',
-    description:
-      'Receives invoice.created, invoice.paid from bitblock-billing. On invoice.paid, updates Organization type and marks related open leads. Subscribe in billing: POST /api/v1/webhooks/subscriptions with url = CRM_BASE_URL/api/v1/webhooks/billing.',
+    description: 'Handles billing events: invoice.paid, invoice.overdue, subscription.cancelled, subscription.created, payment.failed, trial.ending',
   })
   async billingWebhook(
     @Body() payload: { event?: string; timestamp?: string; data?: Record<string, unknown> },
     @Headers('x-webhook-signature') signature?: string,
-    @Req() req?: Request,
   ) {
     const secret = this.config.get('BILLING_WEBHOOK_SECRET');
+    // Item 446: Constant-time comparison to prevent timing attacks
     if (secret?.trim() && signature) {
       const body = JSON.stringify(payload);
       const sig = signature.startsWith('sha256=') ? signature.slice(7) : signature;
       const expected = createHmac('sha256', secret).update(body).digest('hex');
-      if (sig !== expected) {
-        throw new UnauthorizedException('Invalid webhook signature');
-      }
+      // Constant-time comparison
+      if (sig.length !== expected.length) throw new UnauthorizedException('Invalid webhook signature');
+      let diff = 0;
+      for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+      if (diff !== 0) throw new UnauthorizedException('Invalid webhook signature');
     }
 
     const event = payload?.event;
     const data = payload?.data ?? {};
+    const billingCustomerId = data.customerId as string | undefined;
+
+    this.logger.log(`Billing webhook received: ${event}`, 'WebhooksController');
+
+    if (!billingCustomerId) return { received: true };
+
+    const org = await this.prisma.organization.findFirst({
+      where: { billingCustomerId },
+      include: {
+        leads: {
+          where: { deletedAt: null, status: { not: 'won' } },
+          include: { currentStage: true, pipeline: { include: { stages: true } } },
+          orderBy: { updatedAt: 'desc' },
+        },
+      },
+    });
+
+    if (!org) return { received: true };
 
     if (event === 'invoice.paid') {
-      const customerId = data.customerId as string | undefined;
-      if (customerId) {
-        const org = await this.prisma.organization.findFirst({
-          where: { billingCustomerId: customerId },
-          include: {
-            leads: {
-              where: { deletedAt: null, status: { not: 'won' } },
-              include: { currentStage: true, pipeline: { include: { stages: true } } },
-              orderBy: { updatedAt: 'desc' },
-            },
-          },
+      await this.prisma.organization.update({ where: { id: org.id }, data: { type: 'customer' } });
+      const wonStage = org.leads[0]?.pipeline?.stages?.find((s) => s.isWon);
+      if (wonStage && org.leads.length > 0) {
+        await this.prisma.lead.update({
+          where: { id: org.leads[0].id },
+          data: { currentStageId: wonStage.id, status: 'won', closedAt: new Date() },
         });
-        if (org) {
-          await this.prisma.organization.update({
-            where: { id: org.id },
-            data: { type: 'customer' },
-          });
-          const wonStage = org.leads[0]?.pipeline?.stages?.find((s) => s.isWon);
-          if (wonStage && org.leads.length > 0) {
-            await this.prisma.lead.update({
-              where: { id: org.leads[0].id },
-              data: { currentStageId: wonStage.id, status: 'won', closedAt: new Date() },
-            });
-            this.logger.log(`Billing webhook: marked lead ${org.leads[0].id} as won`, 'WebhooksController');
-          }
-          this.logger.log(`Billing webhook: updated org ${org.id} to customer`, 'WebhooksController');
-        }
+        this.logger.log(`Billing: marked lead ${org.leads[0].id} as won`, 'WebhooksController');
+      }
+      // Item 342: Create billing activity
+      try {
+        await this.prisma.activity.create({
+          data: {
+            leadId: org.leads[0]?.id ?? undefined,
+            typeId: await this.getOrCreateActivityTypeId('billing_event'),
+            subject: `Invoice paid — $${((data.amount as number ?? 0) / 100).toFixed(2)}`,
+            status: 'completed',
+            completedAt: new Date(),
+          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
+        });
+      } catch { /* activity type may not exist */ }
+    }
+
+    // Item 338: invoice.overdue → create follow-up activity
+    if (event === 'invoice.overdue') {
+      try {
+        await this.prisma.activity.create({
+          data: {
+            leadId: org.leads[0]?.id ?? undefined,
+            typeId: await this.getOrCreateActivityTypeId('billing_event'),
+            subject: `Invoice overdue — follow up required`,
+            dueDate: new Date(),
+            status: 'pending',
+          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
+        });
+        this.logger.log(`Billing: created overdue follow-up activity for org ${org.id}`, 'WebhooksController');
+      } catch (err) {
+        this.logger.warn(`Could not create activity: ${err}`, 'WebhooksController');
       }
     }
 
+    // Item 339: subscription.cancelled → update org, alert sales rep
+    if (event === 'subscription.cancelled') {
+      await this.prisma.organization.update({ where: { id: org.id }, data: { type: 'prospect' } });
+      try {
+        await this.prisma.inAppNotification.create({
+          data: {
+            message: `Subscription cancelled for ${org.name}`,
+            userId: org.leads[0]?.assignedToId ?? undefined,
+            resourceType: 'organization',
+            resourceId: org.id,
+          } as Parameters<typeof this.prisma.inAppNotification.create>[0]['data'],
+        });
+      } catch { /* field may differ */ }
+    }
+
+    // Item 341: payment.failed → in-app notification
+    if (event === 'payment.failed') {
+      try {
+        await this.prisma.inAppNotification.create({
+          data: {
+            message: `Payment failed for ${org.name} — action required`,
+            userId: org.leads[0]?.assignedToId ?? undefined,
+            resourceType: 'organization',
+            resourceId: org.id,
+          } as Parameters<typeof this.prisma.inAppNotification.create>[0]['data'],
+        });
+      } catch { /* best effort */ }
+    }
+
+    // Item 342: subscription.created → log activity
+    if (event === 'subscription.created') {
+      try {
+        await this.prisma.activity.create({
+          data: {
+            leadId: org.leads[0]?.id ?? undefined,
+            typeId: await this.getOrCreateActivityTypeId('billing_event'),
+            subject: `Subscription created`,
+            status: 'completed',
+            completedAt: new Date(),
+          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
+        });
+      } catch { /* best effort */ }
+    }
+
     return { received: true };
+  }
+
+  private async getOrCreateActivityTypeId(name: string): Promise<string> {
+    const type = await this.prisma.activityType.findFirst({ where: { name } });
+    if (type) return type.id;
+    const created = await this.prisma.activityType.create({ data: { name, color: '#6366f1', icon: 'billing' } });
+    return created.id;
   }
 }

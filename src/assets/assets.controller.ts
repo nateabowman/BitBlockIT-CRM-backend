@@ -68,4 +68,9 @@ export class AssetsController {
     const data = await this.assetsService.requestDownload(id, body);
     return { data };
   }
+
+  @Get(':id/analytics')
+  async getAnalytics(@Param('id') id: string) {
+    return { data: await this.assetsService.getAnalytics(id) };
+  }
 }

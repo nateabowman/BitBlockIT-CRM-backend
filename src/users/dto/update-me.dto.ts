@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUrl, IsObject, Matches, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUrl, IsObject, IsIn, Matches, MaxLength } from 'class-validator';
 
 /** Allow E.164 or common formats (spaces, dashes, parens), or empty to clear; backend normalizes before save. */
 const PHONE_PATTERN = /^[\d\s+\-().]{0,25}$/;
@@ -13,6 +13,11 @@ export class UpdateMeDto {
   @MaxLength(25, { message: 'Phone number is too long' })
   @Matches(PHONE_PATTERN, { message: 'Phone should contain 10–15 digits; spaces/dashes/parens allowed' })
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['phone', 'browser'], { message: 'callMode must be "phone" or "browser"' })
+  callMode?: string;
 
   @IsOptional()
   @IsString()

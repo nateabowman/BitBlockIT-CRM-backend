@@ -91,6 +91,7 @@ export class UsersService {
         name: true,
         avatarUrl: true,
         phone: true,
+        callMode: true,
         timezone: true,
         signature: true,
         notificationPrefs: true,
@@ -118,10 +119,11 @@ export class UsersService {
     return `+${digits}`;
   }
 
-  async updateMe(id: string, data: { name?: string; phone?: string; timezone?: string; avatarUrl?: string; signature?: string; notificationPrefs?: Record<string, unknown> }) {
+  async updateMe(id: string, data: { name?: string; phone?: string; callMode?: string; timezone?: string; avatarUrl?: string; signature?: string; notificationPrefs?: Record<string, unknown> }) {
     const updateData: {
       name?: string;
       phone?: string | null;
+      callMode?: string | null;
       timezone?: string;
       avatarUrl?: string;
       signature?: string;
@@ -133,6 +135,12 @@ export class UsersService {
       signature: data.signature,
       notificationPrefs: data.notificationPrefs as object | undefined,
     };
+    if (data.callMode !== undefined) {
+      if (data.callMode !== 'phone' && data.callMode !== 'browser') {
+        throw new BadRequestException('callMode must be "phone" or "browser"');
+      }
+      updateData.callMode = data.callMode;
+    }
     if (data.phone !== undefined) {
       const trimmed = data.phone.trim();
       if (!trimmed) {

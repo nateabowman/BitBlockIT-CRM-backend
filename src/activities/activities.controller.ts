@@ -114,4 +114,47 @@ export class ActivitiesController {
   async remove(@Param('id') id: string) {
     return await this.activitiesService.remove(id);
   }
+
+  @Post('bulk-complete')
+  async bulkComplete(@Body() body: { activityIds: string[] }, @CurrentUser('sub') userId: string) {
+    return { data: await this.activitiesService.bulkComplete(body.activityIds, userId) };
+  }
+
+  @Post('bulk-delete')
+  async bulkDelete(@Body() body: { activityIds: string[] }) {
+    return { data: await this.activitiesService.bulkDelete(body.activityIds) };
+  }
+
+  @Get('templates')
+  async getTemplates(@CurrentUser('sub') userId: string) {
+    return { data: await this.activitiesService.getTemplates(userId) };
+  }
+
+  @Post('templates')
+  async createTemplate(@CurrentUser('sub') userId: string, @Body() body: { name: string; type: string; subject?: string; body?: string; durationMinutes?: number }) {
+    return { data: await this.activitiesService.createTemplate(userId, body) };
+  }
+
+  @Delete('templates/:id')
+  async deleteTemplate(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    return await this.activitiesService.deleteTemplate(id, userId);
+  }
+
+  @Patch(':id/snooze')
+  async snooze(@Param('id') id: string, @Body() body: { snoozeDays?: number; snoozeDate?: string }) {
+    const newDate = body.snoozeDate
+      ? new Date(body.snoozeDate)
+      : new Date(Date.now() + (body.snoozeDays ?? 1) * 24 * 60 * 60 * 1000);
+    return { data: await this.activitiesService.reschedule(id, newDate) };
+  }
+
+  @Patch(':id/time')
+  async logTime(@Param('id') id: string, @Body() body: { durationMinutes: number }) {
+    return { data: await this.activitiesService.logTime(id, body.durationMinutes) };
+  }
+
+  @Get('streak/:userId')
+  async getStreak(@Param('userId') userId: string) {
+    return { data: await this.activitiesService.getCompletionStreak(userId) };
+  }
 }

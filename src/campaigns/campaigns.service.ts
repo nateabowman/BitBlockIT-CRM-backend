@@ -487,7 +487,6 @@ export class CampaignsService {
     return { data: { campaignName: campaign.name, links: linksArray } };
   }
 
-  /** Failed sends for a campaign (failedAt and lastError set after job retries exhausted) */
   async getFailedSends(campaignId: string) {
     await this.findOne(campaignId);
     const sends = await this.prisma.campaignSend.findMany({
@@ -496,5 +495,39 @@ export class CampaignsService {
       select: { id: true, email: true, variant: true, failedAt: true, lastError: true },
     });
     return { data: sends };
+  }
+
+  async sendToEngaged(campaignId: string, userId: string) {
+    const campaign = await this.findOne(campaignId);
+    if (campaign.status !== 'sent') {
+      throw new BadRequestException('Only sent campaigns can use send-to-engaged');
+    }
+    const sends = await this.prisma.campaignSend.findMany({
+      where: { campaignId, sentAt: { not: null } },
+      select: { id: true, email: true, leadId: true, contactId: true, variant: true },
+    });
+    const openedIds = new Set(
+      (await this.prisma.emailTrackingEvent.findMany({
+        where: { campaignSendId: { in: sends.map((s) => s.id) }, type: 'open' },
+        select: { campaignSendId: true },
+      })).map((e) => e.campaignSendId)
+    );
+    const clickedIds = new Set(
+      (await this.prisma.emailTrackingEvent.findMany({
+        where: { campaignSendId: { in: sends.map((s) => s.id) }, type: 'click' },
+        select: { campaignSendId: true },
+      })).map((e) => e.campaignSendId)
+    );
+    const engaged = sends.filter((s) => openedIds.has(s.id) && !clickedIds.has(s.id));
+    if (engaged.length === 0) return { message: 'No engaged contacts (opened but not clicked) found', recipientCount: 0 };
+    const created = [];
+    for (const s of engaged) {
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const newSend = await this.prisma.campaignSend.create({
+        data: { campaignId, leadId: s.leadId, contactId: s.contactId, email: s.email, variant: s.variant, trackingToken: token },
+      });
+      created.push(newSend);
+    }
+    return { message: `Queued ${created.length} engaged contact(s)`, recipientCount: created.length };
   }
 }

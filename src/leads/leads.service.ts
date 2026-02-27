@@ -113,10 +113,14 @@ export class LeadsService {
     };
   }
 
-  async findAll(query: ListLeadsQueryDto, access?: { role?: string; teamId?: string | null }) {
+  async findAll(query: ListLeadsQueryDto, access?: { role?: string; teamId?: string | null; userId?: string }) {
     const where: Prisma.LeadWhereInput = { deletedAt: null };
     if (access?.role === 'sales_manager' && access?.teamId) {
       where.assignedTo = { teamId: access.teamId };
+    }
+    // salesperson and sales_rep see only their assigned leads by default (unless assignedToId filter overrides)
+    if ((access?.role === 'salesperson' || access?.role === 'sales_rep') && !query.assignedToId && access?.userId) {
+      where.assignedToId = access.userId;
     }
     if (query.status) where.status = query.status;
     if (query.pipelineId) where.pipelineId = query.pipelineId;
@@ -788,5 +792,260 @@ export class LeadsService {
       },
     });
     return { message: 'Email sent', to };
+  }
+
+  async clone(id: string, userId: string, access?: { role?: string; teamId?: string | null }) {
+    const lead = await this.findOne(id, access);
+    const customFields = lead.customFields as object | null;
+    const existing = await this.prisma.lead.findFirst({ where: { id, deletedAt: null } });
+    if (!existing) throw new NotFoundException('Lead not found');
+    const cloned = await this.prisma.lead.create({
+      data: {
+        title: `${lead.title} (Copy)`,
+        pipelineId: existing.pipelineId,
+        currentStageId: existing.currentStageId,
+        organizationId: existing.organizationId,
+        primaryContactId: existing.primaryContactId,
+        source: existing.source,
+        sourceDetail: existing.sourceDetail,
+        assignedToId: userId,
+        customFields: customFields ?? undefined,
+        nextStep: existing.nextStep,
+        expectedCloseAt: existing.expectedCloseAt,
+        amount: existing.amount,
+        currency: existing.currency ?? 'USD',
+        status: 'new',
+      },
+      include: {
+        currentStage: true,
+        organization: true,
+        primaryContact: true,
+        assignedTo: { select: { id: true, name: true, email: true } },
+        tags: { include: { tag: true } },
+      },
+    });
+    await this.audit.log({ userId, action: 'clone', resourceType: 'lead', resourceId: cloned.id, meta: { sourceId: id } });
+    return cloned;
+  }
+
+  async findSimilar(id: string, access?: { role?: string; teamId?: string | null }) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { title: true, organizationId: true } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    const titleWords = lead.title.split(/\s+/).slice(0, 3).join(' ');
+    const where: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      id: { not: id },
+      OR: [
+        { title: { contains: titleWords, mode: 'insensitive' } },
+        ...(lead.organizationId ? [{ organizationId: lead.organizationId }] : []),
+      ],
+    };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    return this.prisma.lead.findMany({
+      where,
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      include: { currentStage: true, organization: true },
+    });
+  }
+
+  async setPriority(id: string, priority: string | null, userId?: string, access?: { role?: string; teamId?: string | null }) {
+    const existing = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { id: true, customFields: true } });
+    if (!existing) throw new NotFoundException('Lead not found');
+    const customFields = (existing.customFields as Record<string, unknown> | null) ?? {};
+    const updated = { ...customFields, priority: priority ?? undefined };
+    const lead = await this.prisma.lead.update({
+      where: { id },
+      data: { customFields: updated },
+    });
+    if (userId) await this.audit.log({ userId, action: 'set_priority', resourceType: 'lead', resourceId: id, meta: { priority } });
+    return lead;
+  }
+
+  async archiveLead(id: string, userId: string, access?: { role?: string; teamId?: string | null }) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { id: true, assignedTo: { select: { teamId: true } } } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    this.assertLeadAccess(lead as { assignedTo?: { teamId?: string | null } | null }, access);
+    const existing = await this.prisma.lead.findFirst({ where: { id }, select: { customFields: true } });
+    const cf = (existing?.customFields as Record<string, unknown> | null) ?? {};
+    const updated = await this.prisma.lead.update({
+      where: { id },
+      data: { customFields: { ...cf, archived: true, archivedAt: new Date().toISOString() } },
+    });
+    await this.audit.log({ userId, action: 'archive', resourceType: 'lead', resourceId: id });
+    return updated;
+  }
+
+  async restoreLead(id: string, userId: string, access?: { role?: string; teamId?: string | null }) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { id: true, customFields: true, assignedTo: { select: { teamId: true } } } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    this.assertLeadAccess(lead as { assignedTo?: { teamId?: string | null } | null }, access);
+    const cf = (lead.customFields as Record<string, unknown> | null) ?? {};
+    const { archived: _a, archivedAt: _b, ...rest } = cf;
+    const updated = await this.prisma.lead.update({ where: { id }, data: { customFields: rest } });
+    await this.audit.log({ userId, action: 'restore', resourceType: 'lead', resourceId: id });
+    return updated;
+  }
+
+  async findArchived(access?: { role?: string; teamId?: string | null; userId?: string }) {
+    const where: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      customFields: { path: ['archived'], equals: true },
+    };
+    if (access?.role === 'salesperson' || access?.role === 'sales_rep') {
+      where.assignedToId = access.userId;
+    } else if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    return this.prisma.lead.findMany({
+      where,
+      take: 50,
+      orderBy: { updatedAt: 'desc' },
+      include: { currentStage: true, organization: true, assignedTo: { select: { id: true, name: true } } },
+    });
+  }
+
+  async getScoreHistory(id: string, access?: { role?: string; teamId?: string | null }) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { id: true, assignedTo: { select: { teamId: true } } } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    this.assertLeadAccess(lead as { assignedTo?: { teamId?: string | null } | null }, access);
+    return this.prisma.leadScoreLog.findMany({
+      where: { leadId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+    });
+  }
+
+  async addQuickNote(leadId: string, content: string, userId: string) {
+    const lead = await this.prisma.lead.findFirst({ where: { id: leadId, deletedAt: null } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    const note = await this.prisma.activity.create({
+      data: {
+        leadId,
+        userId,
+        type: 'note',
+        subject: 'Quick note',
+        body: content,
+        completedAt: new Date(),
+      },
+    });
+    return note;
+  }
+
+  async getHotStreak(id: string) {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const logs = await this.prisma.leadScoreLog.findMany({
+      where: { leadId: id, createdAt: { gte: sevenDaysAgo } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (logs.length < 2) return { isHot: false, scoreDelta: 0 };
+    const scoreDelta = logs[logs.length - 1].newScore - logs[0].previousScore;
+    return { isHot: scoreDelta >= 20, scoreDelta, logsCount: logs.length };
+  }
+
+  async getDealVelocity(id: string) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id },
+      select: { createdAt: true, closedAt: true, status: true, stageHistory: { orderBy: { enteredAt: 'asc' }, include: { toStage: true } } },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    const daysTotal = lead.closedAt
+      ? Math.floor((lead.closedAt.getTime() - lead.createdAt.getTime()) / 86400000)
+      : Math.floor((Date.now() - lead.createdAt.getTime()) / 86400000);
+    return {
+      daysTotal,
+      isWon: lead.status === 'won',
+      createdAt: lead.createdAt,
+      closedAt: lead.closedAt,
+      stageVelocity: lead.stageHistory.map((h, i, arr) => {
+        const next = arr[i + 1];
+        const daysInStage = next
+          ? Math.floor((next.enteredAt.getTime() - h.enteredAt.getTime()) / 86400000)
+          : Math.floor((Date.now() - h.enteredAt.getTime()) / 86400000);
+        return { stage: h.toStage?.name ?? 'Unknown', daysInStage };
+      }),
+    };
+  }
+
+  async getChurnRisk(id: string) {
+    const lead = await this.prisma.lead.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        activities: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+        stageHistory: { orderBy: { enteredAt: 'desc' }, take: 1 },
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+    let riskScore = 0;
+    const daysSinceActivity = lead.activities[0]
+      ? Math.floor((Date.now() - lead.activities[0].createdAt.getTime()) / 86400000)
+      : 999;
+    if (daysSinceActivity > 30) riskScore += 30;
+    else if (daysSinceActivity > 14) riskScore += 15;
+    const daysInStage = lead.stageHistory[0]
+      ? Math.floor((Date.now() - lead.stageHistory[0].enteredAt.getTime()) / 86400000)
+      : 0;
+    if (daysInStage > 30) riskScore += 25;
+    else if (daysInStage > 14) riskScore += 10;
+    const score = lead.score ?? 0;
+    if (score < 20) riskScore += 30;
+    else if (score < 40) riskScore += 15;
+    const level = riskScore >= 60 ? 'high' : riskScore >= 30 ? 'medium' : 'low';
+    return { riskScore, level, daysSinceActivity, daysInStage, leadScore: score };
+  }
+
+  async markRead(id: string, userId: string) {
+    const lead = await this.prisma.lead.findFirst({ where: { id }, select: { customFields: true } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    const cf = (lead.customFields as Record<string, unknown> | null) ?? {};
+    const readBy = (cf.readBy as string[] | undefined) ?? [];
+    if (!readBy.includes(userId)) {
+      await this.prisma.lead.update({ where: { id }, data: { customFields: { ...cf, readBy: [...readBy, userId] } } });
+    }
+    return { read: true };
+  }
+
+  async addNote(id: string, content: string, isInternal: boolean, userId: string) {
+    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null } });
+    if (!lead) throw new NotFoundException('Lead not found');
+    return this.prisma.leadNote.create({
+      data: { leadId: id, body: content, isInternal, userId },
+      include: { user: { select: { id: true, name: true } } },
+    });
+  }
+
+  async getNotes(id: string) {
+    return this.prisma.leadNote.findMany({
+      where: { leadId: id },
+      orderBy: { createdAt: 'desc' },
+      include: { user: { select: { id: true, name: true } } },
+    });
+  }
+
+  async getNeedsAttention(access?: { role?: string; teamId?: string | null; userId?: string }) {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const where: Prisma.LeadWhereInput = {
+      deletedAt: null,
+      status: { notIn: ['won', 'lost'] },
+      activities: {
+        none: {
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      },
+    };
+    if (access?.role === 'salesperson' || access?.role === 'sales_rep') {
+      where.assignedToId = access.userId;
+    } else if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where,
+      take: 20,
+      orderBy: { updatedAt: 'asc' },
+      include: { currentStage: true, organization: true, assignedTo: { select: { id: true, name: true } } },
+    });
+    return leads;
   }
 }

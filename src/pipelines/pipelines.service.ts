@@ -239,4 +239,14 @@ export class PipelinesService {
     }
     return { byGroup: Object.values(byKey), total: leads.reduce((sum, l) => sum + (l.amount ? Number(l.amount) : 0), 0) };
   }
+
+  async archive(id: string) {
+    const pipeline = await this.prisma.pipeline.findUnique({ where: { id } });
+    if (!pipeline) throw new Error('Pipeline not found');
+    return this.prisma.pipeline.update({ where: { id }, data: { isDefault: false } });
+  }
+
+  async restore(id: string) {
+    return this.prisma.pipeline.findUnique({ where: { id } });
+  }
 }

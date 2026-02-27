@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -52,5 +52,17 @@ export class OrganizationsController {
   @Get(':id/leads')
   async leads(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
     return { data: await this.organizationsService.getLeads(id, this.access(user)) };
+  }
+
+  // Item 350: Link billing customer
+  @Post(':id/billing/link')
+  async linkBilling(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    return this.organizationsService.linkBillingCustomer(id, this.access(user));
+  }
+
+  // Item 443: Unlink billing customer
+  @Delete(':id/billing/link')
+  async unlinkBilling(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    return this.organizationsService.unlinkBillingCustomer(id, this.access(user));
   }
 }

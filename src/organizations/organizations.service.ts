@@ -128,4 +128,68 @@ export class OrganizationsService {
       include: { currentStage: true, assignedTo: { select: { id: true, name: true } } },
     });
   }
+
+  // Item 350: Admin endpoint to link billing customer to org
+  async linkBillingCustomer(id: string, access?: Access) {
+    const org = await this.findOne(id, access);
+    if (org.billingCustomerId) {
+      return { data: org, message: 'Already linked to billing' };
+    }
+    if (!this.billing.isConfigured()) {
+      throw new Error('Billing API not configured');
+    }
+    const primaryContact = org.contacts?.find((c) => c.isPrimary) ?? org.contacts?.[0];
+    const customer = await this.billing.createOrLinkCustomer({
+      externalId: org.id,
+      name: org.name,
+      email: primaryContact?.email ?? undefined,
+    });
+    const updated = await this.prisma.organization.update({
+      where: { id },
+      data: { billingCustomerId: customer.id },
+    });
+    return { data: updated, billingCustomerId: customer.id };
+  }
+
+  // Item 443: Unlink billing customer
+  async unlinkBillingCustomer(id: string, access?: Access) {
+    await this.findOne(id, access);
+    const updated = await this.prisma.organization.update({
+      where: { id },
+      data: { billingCustomerId: null },
+    });
+    return { data: updated };
+  }
+
+  // Item 444: Backfill billing customers for orgs of type customer without billingCustomerId
+  async backfillBillingCustomers(): Promise<{ synced: number; failed: number; skipped: number }> {
+    if (!this.billing.isConfigured()) throw new Error('Billing API not configured');
+    const orgs = await this.prisma.organization.findMany({
+      where: { type: 'customer', billingCustomerId: null },
+      include: { contacts: { where: { isPrimary: true }, take: 1 } },
+    });
+
+    let synced = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const org of orgs) {
+      try {
+        const customer = await this.billing.createOrLinkCustomer({
+          externalId: org.id,
+          name: org.name,
+          email: org.contacts[0]?.email ?? undefined,
+        });
+        await this.prisma.organization.update({
+          where: { id: org.id },
+          data: { billingCustomerId: customer.id },
+        });
+        synced++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { synced, failed, skipped };
+  }
 }

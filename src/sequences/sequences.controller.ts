@@ -68,4 +68,14 @@ export class SequencesController {
   async resume(@Param('enrollmentId') enrollmentId: string) {
     return this.sequencesService.resume(enrollmentId);
   }
+
+  @Get(':id/step-analytics')
+  async stepAnalytics(@Param('id') id: string) {
+    return this.sequencesService.getStepAnalytics(id);
+  }
+
+  @Post('unenroll-lead/:leadId')
+  async unenrollByLead(@Param('leadId') leadId: string) {
+    return { data: await this.sequencesService.unenrollByLead(leadId) };
+  }
 }

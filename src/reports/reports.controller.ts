@@ -6,6 +6,7 @@ import { RevenueIntelligenceKeyGuard } from '../common/guards/revenue-intelligen
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtPayload } from '../common/decorators/current-user.decorator';
+import { CacheTTL } from '../common/cache.interceptor';
 
 @Controller('reports')
 export class ReportsController {
@@ -24,6 +25,7 @@ export class ReportsController {
 
   @Get('funnel')
   @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000) // 5 min cache
   async funnel(
     @Query('pipelineId') pipelineId: string,
     @Query('dateFrom') dateFrom?: string,
@@ -200,5 +202,216 @@ export class ReportsController {
       return res.send((result as { data: string }).data);
     }
     return result;
+  }
+
+  @Get('rep-scorecard')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async repScorecard(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getRepScorecard({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('deal-slippage')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async dealSlippage(
+    @Query('dateFrom') dateFrom?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getDealSlippage({ dateFrom }, this.access(user)) };
+  }
+
+  @Get('pipeline-coverage')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async pipelineCoverage(
+    @Query('pipelineId') pipelineId?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getPipelineCoverage(pipelineId, this.access(user)) };
+  }
+
+  @Get('leads-by-assignee')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000)
+  async leadsByAssignee(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getLeadsByAssignee({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('time-to-first-contact')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async timeToFirstContact(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getTimeToFirstContact({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('revenue-leakage')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async revenueLeak(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getRevenueLeak({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('lost-deal-analysis')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async lostDealAnalysis(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getLostDealAnalysis({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('activity-completion-rate')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000)
+  async activityCompletionRate(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getActivityCompletionRate({ dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('email-engagement-trend')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async emailEngagementTrend(
+    @Query('days') days?: string,
+  ) {
+    return { data: await this.reportsService.getEmailEngagementTrend(days ? parseInt(days, 10) : 90) };
+  }
+
+  @Get('forecast-accuracy')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(30 * 60 * 1000)
+  async forecastAccuracy(
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getForecastAccuracy(this.access(user)) };
+  }
+
+  @Get('revenue-by-dimension')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async revenueByDimension(
+    @Query('dimension') dimension: 'industry' | 'companySize' = 'industry',
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getRevenueByDimension(dimension, this.access(user)) };
+  }
+
+  @Get('email-fatigue')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000)
+  async emailFatigue(
+    @Query('windowDays') windowDays?: string,
+    @Query('threshold') threshold?: string,
+  ) {
+    return { data: await this.reportsService.getEmailFatigue(windowDays ? parseInt(windowDays, 10) : 7, threshold ? parseInt(threshold, 10) : 3) };
+  }
+
+  @Get('marketing-attribution')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async marketingAttribution(
+    @Query('model') model?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getMarketingAttribution(model ?? 'last_touch', { dateFrom, dateTo }, this.access(user)) };
+  }
+
+  @Get('ab-significance')
+  @UseGuards(JwtAuthGuard)
+  async abSignificance(
+    @Query('campaignId') campaignId: string,
+  ) {
+    return { data: await this.reportsService.getAbSignificance(campaignId) };
+  }
+
+  @Get('competitive-winloss')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async competitiveWinLoss(
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getCompetitiveWinLoss(this.access(user)) };
+  }
+
+  @Get('goal-vs-actual')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000)
+  async goalVsActual(
+    @Query('period') period?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getGoalVsActual(period ?? 'monthly', this.access(user)) };
+  }
+
+  @Get('pipeline-velocity-trend')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async pipelineVelocityTrend(
+    @Query('weeks') weeks?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getPipelineVelocityTrend(weeks ? parseInt(weeks, 10) : 12, this.access(user)) };
+  }
+
+  @Get('stage-conversion-matrix')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async stageConversionMatrix(
+    @Query('pipelineId') pipelineId?: string,
+    @Query('weeks') weeks?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getStageConversionMatrix(pipelineId, weeks ? parseInt(weeks, 10) : 8, this.access(user)) };
+  }
+
+  @Get('lead-source-trend')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async leadSourceTrend(
+    @Query('weeks') weeks?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getLeadSourceTrend(weeks ? parseInt(weeks, 10) : 12, this.access(user)) };
+  }
+
+  @Get('contact-growth-trend')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(10 * 60 * 1000)
+  async contactGrowthTrend(@Query('weeks') weeks?: string) {
+    return { data: await this.reportsService.getContactGrowthTrend(weeks ? parseInt(weeks, 10) : 12) };
+  }
+
+  @Get('pipeline-coverage-ratio')
+  @UseGuards(JwtAuthGuard)
+  @CacheTTL(5 * 60 * 1000)
+  async pipelineCoverageRatio(
+    @Query('pipelineId') pipelineId?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return { data: await this.reportsService.getPipelineCoverageRatio(pipelineId, this.access(user)) };
   }
 }

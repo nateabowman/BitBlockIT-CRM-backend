@@ -299,4 +299,89 @@ export class ActivitiesService {
     });
     return { message: 'Attachment removed' };
   }
+
+  async bulkComplete(activityIds: string[], userId: string) {
+    const now = new Date();
+    await this.prisma.activity.updateMany({
+      where: { id: { in: activityIds } },
+      data: { completedAt: now },
+    });
+    return { completed: activityIds.length };
+  }
+
+  async bulkDelete(activityIds: string[]) {
+    await this.prisma.activity.deleteMany({
+      where: { id: { in: activityIds } },
+    });
+    return { deleted: activityIds.length };
+  }
+
+  /** Activity templates stored in user preferences JSON */
+  async getTemplates(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { notificationPrefs: true },
+    });
+    const prefs = (user?.notificationPrefs ?? {}) as Record<string, unknown>;
+    const templates = (prefs.activityTemplates ?? []) as {
+      id: string; name: string; type: string; subject?: string; body?: string; durationMinutes?: number;
+    }[];
+    return templates;
+  }
+
+  async createTemplate(userId: string, template: { name: string; type: string; subject?: string; body?: string; durationMinutes?: number }) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { notificationPrefs: true } });
+    const prefs = (user?.notificationPrefs ?? {}) as Record<string, unknown>;
+    const templates = (prefs.activityTemplates ?? []) as Record<string, unknown>[];
+    const newTemplate = { id: Math.random().toString(36).slice(2), ...template, createdAt: new Date().toISOString() };
+    const updated = [...templates, newTemplate];
+    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: updated } } });
+    return newTemplate;
+  }
+
+  async logTime(activityId: string, durationMinutes: number) {
+    const activity = await this.findOne(activityId);
+    const metadata = (activity.metadata as Record<string, unknown> | null) ?? {};
+    return this.prisma.activity.update({
+      where: { id: activityId },
+      data: { metadata: { ...metadata, durationMinutes } },
+    });
+  }
+
+  async getCompletionStreak(userId: string) {
+    const recentDays = 30;
+    const cutoff = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000);
+    const completed = await this.prisma.activity.findMany({
+      where: { userId, completedAt: { gte: cutoff } },
+      select: { completedAt: true },
+      orderBy: { completedAt: 'desc' },
+    });
+    let currentStreak = 0;
+    let longestStreak = 0;
+    let tempStreak = 1;
+    const dates = [...new Set(completed.map((a) =>
+      a.completedAt ? a.completedAt.toISOString().slice(0, 10) : null
+    ).filter(Boolean))].sort().reverse();
+    for (let i = 0; i < dates.length; i++) {
+      if (i === 0) { currentStreak = 1; continue; }
+      const prev = new Date(dates[i - 1] as string);
+      const curr = new Date(dates[i] as string);
+      const diff = Math.floor((prev.getTime() - curr.getTime()) / 86400000);
+      if (diff === 1) { tempStreak++; currentStreak = i === dates.length - 1 ? tempStreak : currentStreak; }
+      else { longestStreak = Math.max(longestStreak, tempStreak); tempStreak = 1; if (i > 0 && currentStreak === i) currentStreak = tempStreak; }
+    }
+    longestStreak = Math.max(longestStreak, tempStreak);
+    const today = new Date().toISOString().slice(0, 10);
+    const isActiveToday = dates[0] === today;
+    return { currentStreak: isActiveToday ? currentStreak : 0, longestStreak, totalCompleted: completed.length, isActiveToday };
+  }
+
+  async deleteTemplate(id: string, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { notificationPrefs: true } });
+    const prefs = (user?.notificationPrefs ?? {}) as Record<string, unknown>;
+    const templates = (prefs.activityTemplates ?? []) as Record<string, unknown>[];
+    const filtered = templates.filter((t) => t.id !== id);
+    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: filtered } } });
+    return { message: 'Template deleted' };
+  }
 }

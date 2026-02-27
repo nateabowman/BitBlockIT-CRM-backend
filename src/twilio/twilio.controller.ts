@@ -42,9 +42,34 @@ export class TwilioController {
 
   @Get('status')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Whether Twilio click-to-call and SMS are configured' })
+  @ApiOperation({ summary: 'Whether Twilio click-to-call, browser calling, and SMS are configured' })
   status() {
-    return { data: { configured: this.twilio.isConfigured() } };
+    return {
+      data: {
+        configured: this.twilio.isConfigured(),
+        browserConfigured: this.twilio.isBrowserConfigured(),
+      },
+    };
+  }
+
+  @Get('client/token')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Generate Twilio Access Token for browser (WebRTC) calling' })
+  async getBrowserToken(
+    @Query('leadId') leadId: string | undefined,
+    @Query('to') to: string | undefined,
+    @Query('scriptPlaybookId') scriptPlaybookId: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    const data = await this.twilio.generateBrowserToken(
+      user.sub,
+      leadId ?? null,
+      to ?? null,
+      access,
+      scriptPlaybookId,
+    );
+    return { data };
   }
 
   @Post('call/initiate')
@@ -125,6 +150,52 @@ export class TwilioController {
   ) {
     const token = tokenFromQuery ?? body?.token;
     await this.voiceConnectHandler(token, res);
+  }
+
+  @Post('voice/connect-gather')
+  @Public()
+  @ApiOperation({ summary: 'TwiML Gather action: called when agent presses a key, dials lead' })
+  async voiceConnectGather(
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    try {
+      if (!token) {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Missing token. Goodbye.</Say><Hangup/></Response>',
+        );
+        return;
+      }
+      const twiml = await this.twilio.getGatherActionTwiML(token);
+      res.setHeader('Content-Type', 'text/xml');
+      res.status(200).send(twiml);
+    } catch {
+      res.status(200).setHeader('Content-Type', 'text/xml').send(VOICE_CONNECT_ERROR_TWIML);
+    }
+  }
+
+  @Post('voice/browser')
+  @Public()
+  @ApiOperation({ summary: 'TwiML App Voice webhook for browser (WebRTC) calls; dials lead' })
+  async voiceBrowser(
+    @Res() res: Response,
+    @Body() body: Record<string, string>,
+  ) {
+    try {
+      const token = body.token ?? '';
+      const callSid = body.CallSid ?? '';
+      if (!token) {
+        res.status(200).setHeader('Content-Type', 'text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Missing token. Goodbye.</Say><Hangup/></Response>',
+        );
+        return;
+      }
+      const twiml = await this.twilio.getBrowserVoiceTwiML(token, callSid);
+      res.setHeader('Content-Type', 'text/xml');
+      res.status(200).send(twiml);
+    } catch {
+      res.status(200).setHeader('Content-Type', 'text/xml').send(VOICE_CONNECT_ERROR_TWIML);
+    }
   }
 
   @Get('call-records')

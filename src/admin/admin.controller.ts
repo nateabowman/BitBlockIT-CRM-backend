@@ -1,18 +1,20 @@
-import { Controller, Get, UseGuards, Res, Query } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Res, Query } from '@nestjs/common';
 import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { SuperAdminGuard } from '../common/guards/super-admin.guard';
 import { AdminService } from './admin.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
 
 @ApiTags('admin')
 @Controller('admin')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin')
+@UseGuards(JwtAuthGuard, SuperAdminGuard)
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly organizationsService: OrganizationsService,
+  ) {}
 
   @Get('stats')
   @ApiOperation({ summary: 'Aggregate stats for admin dashboard' })
@@ -89,5 +91,13 @@ export class AdminController {
     const page = pagination.page ?? 1;
     const limit = pagination.limit ?? 20;
     return this.adminService.getSms({ userId, fromDate, toDate, page, limit });
+  }
+
+  // Item 445: Admin billing routes
+  @Post('billing/backfill')
+  @ApiOperation({ summary: 'Backfill billing customers for all customer-type orgs without billingCustomerId' })
+  @ApiResponse({ status: 200, description: 'Backfill result: { synced, failed, skipped }' })
+  async backfillBilling() {
+    return this.organizationsService.backfillBillingCustomers();
   }
 }

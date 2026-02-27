@@ -113,4 +113,9 @@ export class CampaignsController {
     }
     return result;
   }
+
+  @Post(':id/send-to-engaged')
+  async sendToEngaged(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    return this.campaignsService.sendToEngaged(id, userId);
+  }
 }

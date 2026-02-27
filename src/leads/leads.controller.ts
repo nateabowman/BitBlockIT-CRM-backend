@@ -26,7 +26,7 @@ export class LeadsController {
   async list(@Query() query: ListLeadsQueryDto, @CurrentUser() user?: JwtPayload) {
     const tagIds = query.tagIds as string | string[] | undefined;
     const normalized = Array.isArray(tagIds) ? tagIds : tagIds ? [tagIds] : undefined;
-    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
     const result = await this.leadsService.findAll(
       { ...query, tagIds: normalized },
       access,
@@ -249,5 +249,116 @@ export class LeadsController {
   async remove(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
     const access = user ? { role: user.role, teamId: user.teamId } : undefined;
     return await this.leadsService.remove(id, access);
+  }
+
+  @Post(':id/clone')
+  async clone(
+    @Param('id') id: string,
+    @CurrentUser('sub') userId: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.clone(id, userId, access) };
+  }
+
+  @Get(':id/similar')
+  async similar(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.findSimilar(id, access) };
+  }
+
+  @Patch(':id/priority')
+  async setPriority(
+    @Param('id') id: string,
+    @Body() body: { priority: string | null },
+    @CurrentUser('sub') userId?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.setPriority(id, body.priority, userId, access) };
+  }
+
+  @Get('needs-attention')
+  async needsAttention(@CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
+    return { data: await this.leadsService.getNeedsAttention(access) };
+  }
+
+  @Post(':id/archive')
+  async archive(@Param('id') id: string, @CurrentUser('sub') userId: string, @CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.archiveLead(id, userId, access) };
+  }
+
+  @Post(':id/restore')
+  async restore(@Param('id') id: string, @CurrentUser('sub') userId: string, @CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.restoreLead(id, userId, access) };
+  }
+
+  @Get('archived')
+  async archived(@CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
+    return { data: await this.leadsService.findArchived(access) };
+  }
+
+  @Post(':id/deal-room')
+  async setDealRoom(
+    @Param('id') id: string,
+    @Body() body: { dealRoomUrl: string | null },
+    @CurrentUser('sub') userId: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.setPriority(id, null, userId, access) };
+  }
+
+  @Get(':id/score-history')
+  async scoreHistory(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
+    return { data: await this.leadsService.getScoreHistory(id, access) };
+  }
+
+  @Post(':id/quick-note')
+  async addQuickNote(
+    @Param('id') id: string,
+    @Body() body: { content: string },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return { data: await this.leadsService.addQuickNote(id, body.content, userId) };
+  }
+
+  @Get(':id/hot-streak')
+  async hotStreak(@Param('id') id: string) {
+    return { data: await this.leadsService.getHotStreak(id) };
+  }
+
+  @Get(':id/velocity')
+  async velocity(@Param('id') id: string) {
+    return { data: await this.leadsService.getDealVelocity(id) };
+  }
+
+  @Get(':id/churn-risk')
+  async churnRisk(@Param('id') id: string) {
+    return { data: await this.leadsService.getChurnRisk(id) };
+  }
+
+  @Patch(':id/read')
+  async markRead(@Param('id') id: string, @CurrentUser('sub') userId: string) {
+    return { data: await this.leadsService.markRead(id, userId) };
+  }
+
+  @Post(':id/notes')
+  async addNote(
+    @Param('id') id: string,
+    @Body() body: { content: string; isInternal?: boolean },
+    @CurrentUser('sub') userId: string,
+  ) {
+    return { data: await this.leadsService.addNote(id, body.content, body.isInternal ?? false, userId) };
+  }
+
+  @Get(':id/notes')
+  async getNotes(@Param('id') id: string) {
+    return { data: await this.leadsService.getNotes(id) };
   }
 }

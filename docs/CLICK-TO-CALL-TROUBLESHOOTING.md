@@ -121,6 +121,52 @@ location /api/v1/twilio/ {
 5. **Twilio may use POST for voice/connect**  
    The app supports both GET and POST. If you previously had only GET, adding POST support may resolve 502 if the failure was due to method handling.
 
+### Still getting 502? Run this on the server
+
+**SSH into the machine that serves `crmapi.bitblockit.com`**, then run these in order. They show whether the backend is reachable and what nginx is doing.
+
+```bash
+# 1) What port does your backend listen on? (e.g. 3001). Check your app config or process.
+BACKEND_PORT=3001   # <-- set this to your app's port
+
+# 2) Is the backend process running and responding?
+curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/health"
+# Must print 200. If "Connection refused", the app is not listening on that port.
+
+# 3) Does the backend respond to voice/connect directly (bypassing nginx)?
+curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$BACKEND_PORT/api/v1/twilio/voice/connect?token=test"
+# Must print 200. If 200 here but Twilio gets 502, the problem is nginx or how nginx talks to the backend.
+
+# 4) Simulate Twilio's POST (they send form body)
+curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$BACKEND_PORT/api/v1/twilio/voice/connect?token=test" -d "CallSid=CA123&From=%2B15551234567&To=%2B15559876543"
+# Must print 200.
+
+# 5) Recent nginx errors (run right after a failed call)
+sudo tail -30 /var/log/nginx/error.log
+# Look for: "connection refused", "upstream timed out", "upstream prematurely closed".
+```
+
+**How to fix from here:**
+
+| Result | Fix |
+|--------|-----|
+| `curl` to `127.0.0.1:PORT` = Connection refused | Start the backend or fix the port. Nginx is pointing at the right host but nothing is listening. |
+| `curl` to `127.0.0.1:PORT` = 200, but Twilio gets 502 | Nginx is not proxying correctly. Check `proxy_pass` and that the upstream name/port matches. Ensure `location /api/v1/twilio/` has `proxy_read_timeout 30s` (see nginx block above). |
+| nginx log: "upstream timed out" | Increase `proxy_read_timeout` and `proxy_send_timeout` to 30s for `/api/v1/twilio/`. |
+| nginx log: "connection refused" | Backend not running on the port nginx uses, or nginx upstream block has wrong `server`/port. |
+| nginx log: "upstream prematurely closed" | Backend is crashing on the request. Check Node/PM2 logs for the same timestamp as the call. |
+
+**Find nginx config for this site:**
+
+```bash
+# Usually one of these
+sudo nginx -T 2>/dev/null | grep -A 50 "crmapi.bitblockit.com"
+# or
+grep -r "crmapi\|twilio\|api/v1" /etc/nginx/
+```
+
+Then edit the correct `server`/`location` block, add or adjust the `location /api/v1/twilio/` snippet from above, and run `sudo nginx -t && sudo systemctl reload nginx`.
+
 ---
 
 ## Step 5: Check Reverse Proxy / Load Balancer (General)

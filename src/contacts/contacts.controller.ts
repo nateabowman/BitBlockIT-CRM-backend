@@ -71,4 +71,14 @@ export class ContactsController {
   async hardDelete(@Param('id') id: string, @CurrentUser('sub') userId?: string, @CurrentUser() user?: JwtPayload) {
     return await this.contactsService.hardDeleteContact(id, userId, this.access(user));
   }
+
+  @Post(':id/gdpr-erase')
+  async gdprErase(@Param('id') id: string, @CurrentUser('sub') userId?: string) {
+    return await this.contactsService.gdprErase(id, userId);
+  }
+
+  @Get(':id/last-contacted')
+  async lastContacted(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
+    return { data: await this.contactsService.getLastContacted(id, this.access(user)) };
+  }
 }

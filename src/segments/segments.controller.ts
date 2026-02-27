@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { SegmentsService } from './segments.service';
 import { CreateSegmentDto } from './dto/create-segment.dto';
 import { UpdateSegmentDto } from './dto/update-segment.dto';
@@ -59,5 +60,23 @@ export class SegmentsController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.segmentsService.remove(id);
+  }
+
+  @Get(':id/health')
+  async getHealth(@Param('id') id: string) {
+    return { data: await this.segmentsService.getHealth(id) };
+  }
+
+  @Get(':id/export')
+  async exportCsv(@Param('id') id: string, @Res() res: Response) {
+    const csv = await this.segmentsService.exportCsv(id);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=segment-${id}.csv`);
+    res.send(csv);
+  }
+
+  @Get('overlap')
+  async getOverlap(@Query('id1') id1: string, @Query('id2') id2: string) {
+    return { data: await this.segmentsService.getOverlap(id1, id2) };
   }
 }

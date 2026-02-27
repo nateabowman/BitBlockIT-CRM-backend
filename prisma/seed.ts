@@ -12,7 +12,13 @@ async function main() {
   const adminRole = await prisma.role.upsert({
     where: { name: 'admin' },
     update: {},
-    create: { name: 'admin', description: 'Full access' },
+    create: { name: 'admin', description: 'Full CRM access' },
+  });
+
+  const superAdminRole = await prisma.role.upsert({
+    where: { name: 'super-admin' },
+    update: {},
+    create: { name: 'super-admin', description: 'Full access including admin panel' },
   });
 
   const permissions = [
@@ -49,6 +55,55 @@ async function main() {
       where: { roleId_permissionId: { roleId: adminRole.id, permissionId: perm.id } },
       update: {},
       create: { roleId: adminRole.id, permissionId: perm.id },
+    });
+    // super-admin gets every permission too
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: superAdminRole.id, permissionId: perm.id } },
+      update: {},
+      create: { roleId: superAdminRole.id, permissionId: perm.id },
+    });
+  }
+
+  // salesperson role (mirrors sales_rep with user-friendly name)
+  const salespersonRole = await prisma.role.upsert({
+    where: { name: 'salesperson' },
+    update: {},
+    create: { name: 'salesperson', description: 'Outbound sales: leads, contacts, calls, SMS, email' },
+  });
+  const salesRepPermResources2 = ['lead', 'contact', 'organization', 'activity', 'pipeline', 'report'];
+  for (const resource of salesRepPermResources2) {
+    const readP = perms.find((perm) => perm.resource === resource && perm.action === 'read');
+    if (readP) {
+      await prisma.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: salespersonRole.id, permissionId: readP.id } },
+        update: {},
+        create: { roleId: salespersonRole.id, permissionId: readP.id },
+      });
+    }
+    if (resource === 'lead' || resource === 'contact' || resource === 'activity') {
+      const writeP = perms.find((perm) => perm.resource === resource && perm.action === 'write');
+      if (writeP) {
+        await prisma.rolePermission.upsert({
+          where: { roleId_permissionId: { roleId: salespersonRole.id, permissionId: writeP.id } },
+          update: {},
+          create: { roleId: salespersonRole.id, permissionId: writeP.id },
+        });
+      }
+    }
+  }
+
+  // read-only role (mirrors viewer with user-friendly name)
+  const readOnlyRole = await prisma.role.upsert({
+    where: { name: 'read-only' },
+    update: {},
+    create: { name: 'read-only', description: 'Read-only access to all CRM data' },
+  });
+  const readOnlyPerms = perms.filter((perm) => perm.action === 'read');
+  for (const perm of readOnlyPerms) {
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: readOnlyRole.id, permissionId: perm.id } },
+      update: {},
+      create: { roleId: readOnlyRole.id, permissionId: perm.id },
     });
   }
 
@@ -128,12 +183,12 @@ async function main() {
   const passwordHash = await bcrypt.hash('admin123', 10);
   await prisma.user.upsert({
     where: { email: 'admin@bitblockit.com' },
-    update: { passwordHash },
+    update: { passwordHash, roleId: superAdminRole.id },
     create: {
       email: 'admin@bitblockit.com',
       passwordHash,
       name: 'Admin',
-      roleId: adminRole.id,
+      roleId: superAdminRole.id,
     },
   });
 

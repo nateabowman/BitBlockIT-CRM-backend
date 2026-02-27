@@ -76,4 +76,14 @@ export class PipelinesController {
   async forecast(@Param('id') id: string, @Query('groupBy') groupBy?: 'assignee' | 'team') {
     return { data: await this.pipelinesService.getForecast(id, groupBy) };
   }
+
+  @Post(':id/archive')
+  async archive(@Param('id') id: string) {
+    return { data: await this.pipelinesService.archive(id) };
+  }
+
+  @Post(':id/restore')
+  async restore(@Param('id') id: string) {
+    return { data: await this.pipelinesService.restore(id) };
+  }
 }

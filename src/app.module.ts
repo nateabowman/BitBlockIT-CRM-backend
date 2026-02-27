@@ -42,16 +42,21 @@ import { SuppressionModule } from './suppression/suppression.module';
 import { ApolloModule } from './apollo/apollo.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { SalesPlaybooksModule } from './sales-playbooks/sales-playbooks.module';
+import { AutomationModule } from './automation/automation.module';
+import { AiModule } from './ai/ai.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 import { LoggerService } from './common/logger.service';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { MetricsService } from './common/metrics.service';
 import { MetricsInterceptor } from './common/metrics.interceptor';
+import { InMemoryCacheInterceptor } from './common/cache.interceptor';
 
 @Module({
   providers: [
     LoggerService,
     MetricsService,
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: InMemoryCacheInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     RolesGuard,
@@ -97,6 +102,9 @@ import { MetricsInterceptor } from './common/metrics.interceptor';
     ApolloModule,
     TwilioModule,
     SalesPlaybooksModule,
+    AutomationModule,
+    AiModule,
+    IntegrationsModule,
   ],
 })
 export class AppModule implements NestModule {

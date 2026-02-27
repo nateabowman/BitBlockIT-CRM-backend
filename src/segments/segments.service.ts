@@ -218,4 +218,50 @@ export class SegmentsService {
     const recipients = await this.resolveRecipients(segmentId, 50_000);
     return recipients.length;
   }
+
+  async getHealth(segmentId: string) {
+    const recipients = await this.resolveRecipients(segmentId, 50_000);
+    const contactIds = recipients.map((r) => r.contactId).filter(Boolean);
+    const total = recipients.length;
+    if (total === 0) return { total: 0, deliverable: 0, bounced: 0, unsubscribed: 0, deliverabilityRate: 0, score: 'N/A' };
+
+    const [bounced, unsubscribed] = await Promise.all([
+      this.prisma.contact.count({ where: { id: { in: contactIds as string[] }, bouncedAt: { not: null } } }),
+      this.prisma.contact.count({ where: { id: { in: contactIds as string[] }, unsubscribedAt: { not: null } } }),
+    ]);
+
+    const deliverable = total - bounced - unsubscribed;
+    const rate = Math.round((deliverable / total) * 100);
+    const score = rate >= 90 ? 'Excellent' : rate >= 75 ? 'Good' : rate >= 60 ? 'Fair' : 'Poor';
+
+    return {
+      total, deliverable, bounced, unsubscribed,
+      deliverabilityRate: rate,
+      bounceRate: parseFloat(((bounced / total) * 100).toFixed(1)),
+      unsubscribeRate: parseFloat(((unsubscribed / total) * 100).toFixed(1)),
+      score,
+    };
+  }
+
+  async exportCsv(segmentId: string): Promise<string> {
+    const recipients = await this.resolveRecipients(segmentId, 50_000);
+    const headers = 'Lead ID,Contact ID,Email\n';
+    const rows = recipients.map((r) => `${r.leadId},${r.contactId ?? ''},${r.email}`).join('\n');
+    return headers + rows;
+  }
+
+  async getOverlap(id1: string, id2: string) {
+    const [r1, r2] = await Promise.all([
+      this.resolveRecipients(id1, 50_000),
+      this.resolveRecipients(id2, 50_000),
+    ]);
+    const set1 = new Set(r1.map((r) => r.email));
+    const set2 = new Set(r2.map((r) => r.email));
+    const overlap = [...set1].filter((e) => set2.has(e));
+    return {
+      segment1Count: r1.length, segment2Count: r2.length,
+      overlapCount: overlap.length,
+      overlapRate: r1.length > 0 ? parseFloat(((overlap.length / r1.length) * 100).toFixed(1)) : 0,
+    };
+  }
 }

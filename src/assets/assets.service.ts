@@ -103,4 +103,31 @@ export class AssetsService {
       byDay: Object.entries(byDayMap).map(([day, count]) => ({ day, count })).sort((a, b) => a.day.localeCompare(b.day)),
     };
   }
+
+  async getAnalytics(id: string) {
+    const asset = await this.prisma.asset.findUnique({
+      where: { id },
+      select: { id: true, name: true, downloads: { orderBy: { downloadedAt: 'desc' }, take: 100, include: { contact: { select: { id: true, firstName: true, lastName: true, email: true } } } } },
+    });
+    if (!asset) throw new Error('Asset not found');
+    const total = asset.downloads.length;
+    const uniqueContacts = new Set(asset.downloads.map((d) => d.contactId).filter(Boolean)).size;
+    const byDay = asset.downloads.reduce((acc, d) => {
+      if (!d.downloadedAt) return acc;
+      const day = d.downloadedAt.toISOString().slice(0, 10);
+      acc[day] = (acc[day] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    return {
+      assetName: asset.name,
+      totalDownloads: total,
+      uniqueContacts,
+      byDay: Object.entries(byDay).map(([day, count]) => ({ day, count })).sort((a, b) => a.day.localeCompare(b.day)).slice(-30),
+      recentDownloads: asset.downloads.slice(0, 20).map((d) => ({
+        email: d.email ?? d.contact?.email,
+        contactName: d.contact ? `${d.contact.firstName} ${d.contact.lastName}` : null,
+        downloadedAt: d.downloadedAt,
+      })),
+    };
+  }
 }

@@ -764,4 +764,722 @@ export class ReportsService {
       meta: { generatedAt: new Date().toISOString() },
     };
   }
+
+  async getRepScorecard(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, email: true },
+    });
+
+    const scorecard = await Promise.all(
+      users.map(async (user) => {
+        const [total, won, lost, activityCount] = await Promise.all([
+          this.prisma.lead.count({ where: { ...where, assignedToId: user.id } }),
+          this.prisma.lead.count({ where: { ...where, assignedToId: user.id, status: 'won' } }),
+          this.prisma.lead.count({ where: { ...where, assignedToId: user.id, status: 'lost' } }),
+          this.prisma.activity.count({
+            where: {
+              userId: user.id,
+              ...(params.dateFrom || params.dateTo ? {
+                createdAt: {
+                  ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+                  ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+                },
+              } : {}),
+            },
+          }),
+        ]);
+
+        const avgDealSize = await this.prisma.lead.aggregate({
+          where: { ...where, assignedToId: user.id, status: 'won', amount: { not: null } },
+          _avg: { amount: true },
+        });
+
+        return {
+          userId: user.id,
+          userName: user.name ?? user.email,
+          total,
+          won,
+          lost,
+          winRate: total > 0 ? Math.round((won / total) * 100) : 0,
+          activityCount,
+          avgDealSize: avgDealSize._avg.amount ? Number(avgDealSize._avg.amount) : 0,
+        };
+      })
+    );
+
+    return scorecard.filter((r) => r.total > 0 || r.activityCount > 0).sort((a, b) => b.winRate - a.winRate);
+  }
+
+  async getDealSlippage(params: { dateFrom?: string }, access?: Access) {
+    const cutoff = params.dateFrom ? new Date(params.dateFrom) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const where: Record<string, unknown> = {
+      deletedAt: null,
+      status: { notIn: ['won', 'lost'] },
+      expectedCloseAt: { lt: new Date() },
+    };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      (where as Record<string, unknown>).assignedTo = { teamId: access.teamId };
+    }
+
+    const slipped = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      take: 50,
+      orderBy: { expectedCloseAt: 'asc' },
+      include: {
+        currentStage: true,
+        organization: true,
+        assignedTo: { select: { id: true, name: true } },
+      },
+    });
+
+    return slipped.map((l) => ({
+      id: l.id,
+      title: l.title,
+      expectedCloseAt: l.expectedCloseAt,
+      daysOverdue: l.expectedCloseAt ? Math.floor((Date.now() - l.expectedCloseAt.getTime()) / 86400000) : 0,
+      amount: l.amount ? Number(l.amount) : null,
+      currency: l.currency,
+      stage: l.currentStage?.name,
+      organization: l.organization?.name,
+      assignedTo: l.assignedTo?.name,
+    }));
+  }
+
+  async getPipelineCoverage(pipelineId?: string, access?: Access) {
+    const where: Record<string, unknown> = {
+      deletedAt: null,
+      status: { notIn: ['won', 'lost'] },
+    };
+    if (pipelineId) where.pipelineId = pipelineId;
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      (where as Record<string, unknown>).assignedTo = { teamId: access.teamId };
+    }
+
+    const result = await this.prisma.lead.aggregate({
+      where: where as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+      _sum: { amount: true },
+      _count: { id: true },
+    });
+
+    return {
+      openPipelineValue: result._sum.amount ? Number(result._sum.amount) : 0,
+      openLeadCount: result._count.id,
+    };
+  }
+
+  async getLeadsByAssignee(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+
+    const grouped = await this.prisma.lead.groupBy({
+      by: ['assignedToId'],
+      where: where as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+      _count: { id: true },
+    });
+
+    const userIds = grouped.map((g) => g.assignedToId).filter(Boolean) as string[];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true },
+    });
+
+    const wonGroups = await this.prisma.lead.groupBy({
+      by: ['assignedToId'],
+      where: { ...where, status: 'won' } as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+      _count: { id: true },
+    });
+
+    return grouped.map((g) => {
+      const user = users.find((u) => u.id === g.assignedToId);
+      const wonCount = wonGroups.find((w) => w.assignedToId === g.assignedToId)?._count.id ?? 0;
+      return {
+        userId: g.assignedToId,
+        userName: user?.name ?? 'Unassigned',
+        total: g._count.id,
+        won: wonCount,
+        lost: 0,
+      };
+    }).sort((a, b) => b.total - a.total);
+  }
+
+  async getEmailFatigue(windowDays = 7, threshold = 3) {
+    const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+    const sends = await this.prisma.campaignSend.groupBy({
+      by: ['contactId'],
+      where: { sentAt: { gte: cutoff }, contactId: { not: null } },
+      _count: { id: true },
+    });
+    const fatigued = sends.filter((s) => s._count.id >= threshold);
+    const contactIds = fatigued.map((s) => s.contactId).filter(Boolean) as string[];
+    const contacts = await this.prisma.contact.findMany({
+      where: { id: { in: contactIds } },
+      select: { id: true, firstName: true, lastName: true, email: true },
+    });
+    return {
+      windowDays,
+      threshold,
+      total: sends.length,
+      fatigued: fatigued.length,
+      fatiguedRate: sends.length > 0 ? parseFloat(((fatigued.length / sends.length) * 100).toFixed(1)) : 0,
+      contacts: contacts.map((c) => ({
+        id: c.id,
+        name: `${c.firstName} ${c.lastName}`.trim(),
+        email: c.email,
+        emailsReceived: fatigued.find((f) => f.contactId === c.id)?._count.id ?? 0,
+      })).sort((a, b) => b.emailsReceived - a.emailsReceived),
+    };
+  }
+
+  async getMarketingAttribution(model: string, params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      select: { id: true, source: true, status: true, amount: true, utmSource: true, utmMedium: true, utmCampaign: true },
+    });
+
+    const bySource: Record<string, { source: string; leads: number; won: number; revenue: number }> = {};
+    for (const lead of leads) {
+      const key = lead.utmSource ?? lead.source ?? 'Direct';
+      if (!bySource[key]) bySource[key] = { source: key, leads: 0, won: 0, revenue: 0 };
+      bySource[key].leads++;
+      if (lead.status === 'won') {
+        bySource[key].won++;
+        bySource[key].revenue += lead.amount ? Number(lead.amount) : 0;
+      }
+    }
+
+    return {
+      model,
+      attribution: Object.values(bySource)
+        .sort((a, b) => b.revenue - a.revenue)
+        .map((s) => ({
+          ...s,
+          winRate: s.leads > 0 ? Math.round((s.won / s.leads) * 100) : 0,
+          revenueShare: leads.filter((l) => l.status === 'won').length > 0
+            ? Math.round((s.won / leads.filter((l) => l.status === 'won').length) * 100)
+            : 0,
+        })),
+    };
+  }
+
+  async getAbSignificance(campaignId: string) {
+    const sends = await this.prisma.campaignSend.findMany({
+      where: { campaignId, sentAt: { not: null } },
+      select: { id: true, variant: true },
+    });
+    const events = await this.prisma.emailTrackingEvent.findMany({
+      where: { campaignSendId: { in: sends.map((s) => s.id) }, type: 'open' },
+      select: { campaignSendId: true },
+    });
+    const openedIds = new Set(events.map((e) => e.campaignSendId));
+
+    const variants: Record<string, { sent: number; opens: number }> = {};
+    for (const s of sends) {
+      const v = s.variant ?? 'A';
+      if (!variants[v]) variants[v] = { sent: 0, opens: 0 };
+      variants[v].sent++;
+      if (openedIds.has(s.id)) variants[v].opens++;
+    }
+
+    const variantList = Object.entries(variants).map(([name, data]) => ({
+      name,
+      sent: data.sent,
+      opens: data.opens,
+      openRate: data.sent > 0 ? parseFloat(((data.opens / data.sent) * 100).toFixed(1)) : 0,
+    }));
+
+    // Chi-squared test for significance (2-variant)
+    let chiSquared: number | null = null;
+    let pValue: number | null = null;
+    let significant = false;
+    if (variantList.length === 2) {
+      const [a, b] = variantList;
+      const total = a.sent + b.sent;
+      const totalOpens = a.opens + b.opens;
+      const expectedA = (a.sent / total) * totalOpens;
+      const expectedB = (b.sent / total) * totalOpens;
+      if (expectedA > 0 && expectedB > 0) {
+        chiSquared = Math.pow(a.opens - expectedA, 2) / expectedA + Math.pow(b.opens - expectedB, 2) / expectedB;
+        // Approximate p-value (chi-squared with 1 df)
+        pValue = Math.exp(-chiSquared / 2);
+        significant = chiSquared > 3.841; // p < 0.05
+      }
+    }
+
+    return {
+      campaignId,
+      variants: variantList,
+      chiSquared,
+      pValue,
+      significant,
+      confidence: pValue ? Math.round((1 - pValue) * 100) : null,
+      winner: significant && variantList.length === 2 ? (variantList[0].openRate > variantList[1].openRate ? variantList[0].name : variantList[1].name) : null,
+    };
+  }
+
+  async getCompetitiveWinLoss(access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null, status: { in: ['won', 'lost'] } };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      select: { id: true, status: true, amount: true, customFields: true },
+    });
+
+    const byCompetitor: Record<string, { name: string; mentioned: number; won: number; lost: number }> = {};
+    for (const lead of leads) {
+      const cf = lead.customFields as Record<string, unknown> | null;
+      const competitors = (cf?.competitors as { name: string; status: string }[] | undefined) ?? [];
+      for (const c of competitors) {
+        if (!byCompetitor[c.name]) byCompetitor[c.name] = { name: c.name, mentioned: 0, won: 0, lost: 0 };
+        byCompetitor[c.name].mentioned++;
+        if (lead.status === 'won') byCompetitor[c.name].won++;
+        if (lead.status === 'lost' && c.status === 'lost_to') byCompetitor[c.name].lost++;
+      }
+    }
+
+    return Object.values(byCompetitor)
+      .sort((a, b) => b.mentioned - a.mentioned)
+      .map((c) => ({
+        ...c,
+        winRate: c.won + c.lost > 0 ? Math.round((c.won / (c.won + c.lost)) * 100) : 0,
+      }));
+  }
+
+  async getGoalVsActual(period: string, access?: Access) {
+    const now = new Date();
+    let start: Date, end: Date;
+    if (period === 'quarterly') {
+      const q = Math.floor(now.getMonth() / 3);
+      start = new Date(now.getFullYear(), q * 3, 1);
+      end = new Date(now.getFullYear(), q * 3 + 3, 0);
+    } else {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    }
+
+    const where: Record<string, unknown> = {
+      deletedAt: null,
+      status: 'won',
+      closedAt: { gte: start, lte: end },
+    };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+
+    const [wonLeads, totalLeads] = await Promise.all([
+      this.prisma.lead.findMany({
+        where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+        select: { amount: true },
+      }),
+      this.prisma.lead.count({
+        where: { ...where, status: undefined, closedAt: undefined, createdAt: { gte: start, lte: end } } as Parameters<typeof this.prisma.lead.count>[0]['where'],
+      }),
+    ]);
+
+    const actualRevenue = wonLeads.reduce((s, l) => s + (l.amount ? Number(l.amount) : 0), 0);
+    const wonCount = wonLeads.length;
+
+    return {
+      period,
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+      actual: { revenue: actualRevenue, deals: wonCount, leads: totalLeads },
+    };
+  }
+
+  async getActivityCompletionRate(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = {};
+    if (params.dateFrom || params.dateTo) {
+      where.scheduledAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+    const [total, completed] = await Promise.all([
+      this.prisma.activity.count({ where: where as Parameters<typeof this.prisma.activity.count>[0]['where'] }),
+      this.prisma.activity.count({ where: { ...(where as Parameters<typeof this.prisma.activity.count>[0]['where']), completedAt: { not: null } } }),
+    ]);
+    const byUser = await this.prisma.activity.groupBy({
+      by: ['userId'],
+      where: where as Parameters<typeof this.prisma.activity.groupBy>[0]['where'],
+      _count: { id: true },
+    });
+    const completedByUser = await this.prisma.activity.groupBy({
+      by: ['userId'],
+      where: { ...(where as Parameters<typeof this.prisma.activity.groupBy>[0]['where']), completedAt: { not: null } },
+      _count: { id: true },
+    });
+    const userIds = byUser.map((u) => u.userId);
+    const users = await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } });
+    const byUserStats = byUser.map((u) => {
+      const comp = completedByUser.find((c) => c.userId === u.userId)?._count.id ?? 0;
+      const user = users.find((usr) => usr.id === u.userId);
+      return {
+        userId: u.userId,
+        userName: user?.name ?? 'Unknown',
+        total: u._count.id,
+        completed: comp,
+        rate: u._count.id > 0 ? Math.round((comp / u._count.id) * 100) : 0,
+      };
+    }).sort((a, b) => b.rate - a.rate);
+    return {
+      total,
+      completed,
+      completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
+      byUser: byUserStats,
+    };
+  }
+
+  async getEmailEngagementTrend(days = 90) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const sends = await this.prisma.campaignSend.findMany({
+      where: { sentAt: { gte: cutoff } },
+      select: { sentAt: true, id: true },
+    });
+    const events = await this.prisma.emailTrackingEvent.findMany({
+      where: { createdAt: { gte: cutoff } },
+      select: { type: true, campaignSendId: true, createdAt: true },
+    });
+    const byWeek: Record<string, { sent: number; opens: number; clicks: number }> = {};
+    for (const s of sends) {
+      const week = s.sentAt!.toISOString().slice(0, 10).slice(0, 7);
+      if (!byWeek[week]) byWeek[week] = { sent: 0, opens: 0, clicks: 0 };
+      byWeek[week].sent++;
+    }
+    for (const e of events) {
+      const week = e.createdAt.toISOString().slice(0, 7);
+      if (!byWeek[week]) byWeek[week] = { sent: 0, opens: 0, clicks: 0 };
+      if (e.type === 'open') byWeek[week].opens++;
+      if (e.type === 'click') byWeek[week].clicks++;
+    }
+    return Object.entries(byWeek)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([week, stats]) => ({
+        week,
+        ...stats,
+        openRate: stats.sent > 0 ? parseFloat(((stats.opens / stats.sent) * 100).toFixed(1)) : 0,
+        clickRate: stats.sent > 0 ? parseFloat(((stats.clicks / stats.sent) * 100).toFixed(1)) : 0,
+      }));
+  }
+
+  async getForecastAccuracy(access?: Access) {
+    const now = new Date();
+    const lastQuarter = new Date(now);
+    lastQuarter.setMonth(lastQuarter.getMonth() - 3);
+    const where: Record<string, unknown> = {
+      deletedAt: null,
+      expectedCloseAt: { gte: lastQuarter, lte: now },
+    };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      select: { status: true, amount: true, expectedCloseAt: true, closedAt: true },
+    });
+    const forecasted = leads.length;
+    const closedOnTime = leads.filter((l) => l.status === 'won' && l.closedAt && l.expectedCloseAt && l.closedAt <= l.expectedCloseAt).length;
+    const wonTotal = leads.filter((l) => l.status === 'won').length;
+    const forecastedRevenue = leads.reduce((s, l) => s + (l.amount ? Number(l.amount) : 0), 0);
+    const actualRevenue = leads.filter((l) => l.status === 'won').reduce((s, l) => s + (l.amount ? Number(l.amount) : 0), 0);
+    return {
+      forecasted,
+      wonTotal,
+      winRate: forecasted > 0 ? Math.round((wonTotal / forecasted) * 100) : 0,
+      closedOnTime,
+      onTimeRate: wonTotal > 0 ? Math.round((closedOnTime / wonTotal) * 100) : 0,
+      forecastedRevenue,
+      actualRevenue,
+      accuracy: forecastedRevenue > 0 ? Math.round((actualRevenue / forecastedRevenue) * 100) : 0,
+    };
+  }
+
+  async getRevenueLeak(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null, status: 'lost' };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.closedAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+    const lostLeads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      include: {
+        currentStage: true,
+        organization: true,
+        assignedTo: { select: { id: true, name: true } },
+      },
+    });
+    const totalLost = lostLeads.reduce((s, l) => s + (l.amount ? Number(l.amount) : 0), 0);
+    const byStage = lostLeads.reduce((acc, l) => {
+      const stage = l.currentStage?.name ?? 'Unknown';
+      if (!acc[stage]) acc[stage] = { stage, count: 0, totalAmount: 0 };
+      acc[stage].count++;
+      acc[stage].totalAmount += l.amount ? Number(l.amount) : 0;
+      return acc;
+    }, {} as Record<string, { stage: string; count: number; totalAmount: number }>);
+    return {
+      totalLost,
+      count: lostLeads.length,
+      byStage: Object.values(byStage).sort((a, b) => b.totalAmount - a.totalAmount),
+    };
+  }
+
+  async getLostDealAnalysis(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null, status: 'lost' };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.closedAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      select: { id: true, lostReason: true, amount: true, source: true },
+    });
+    const byReason = leads.reduce((acc, l) => {
+      const reason = l.lostReason ?? 'No reason specified';
+      if (!acc[reason]) acc[reason] = { reason, count: 0, totalAmount: 0 };
+      acc[reason].count++;
+      acc[reason].totalAmount += l.amount ? Number(l.amount) : 0;
+      return acc;
+    }, {} as Record<string, { reason: string; count: number; totalAmount: number }>);
+    const bySource = leads.reduce((acc, l) => {
+      const source = l.source ?? 'Unknown';
+      if (!acc[source]) acc[source] = { source, lost: 0 };
+      acc[source].lost++;
+      return acc;
+    }, {} as Record<string, { source: string; lost: number }>);
+    return {
+      total: leads.length,
+      totalValue: leads.reduce((s, l) => s + (l.amount ? Number(l.amount) : 0), 0),
+      byReason: Object.values(byReason).sort((a, b) => b.count - a.count),
+      bySource: Object.values(bySource).sort((a, b) => b.lost - a.lost),
+    };
+  }
+
+  async getRevenueByDimension(dimension: 'industry' | 'companySize', access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null, status: 'won' };
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      select: { amount: true, organization: { select: { industry: true, type: true } }, customFields: true },
+    });
+    const grouped: Record<string, number> = {};
+    for (const lead of leads) {
+      let key = 'Unknown';
+      if (dimension === 'industry') key = lead.organization?.industry ?? 'Unknown';
+      else {
+        const cf = lead.customFields as Record<string, unknown> | null;
+        key = (cf?.companySize as string) ?? 'Unknown';
+      }
+      grouped[key] = (grouped[key] ?? 0) + (lead.amount ? Number(lead.amount) : 0);
+    }
+    return Object.entries(grouped)
+      .map(([name, revenue]) => ({ name, revenue }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .filter((d) => d.name !== 'Unknown' || d.revenue > 0);
+  }
+
+  async getTimeToFirstContact(params: { dateFrom?: string; dateTo?: string }, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null };
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
+      };
+    }
+    if (access?.role === 'sales_manager' && access?.teamId) {
+      where.assignedTo = { teamId: access.teamId };
+    }
+
+    const leads = await this.prisma.lead.findMany({
+      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      take: 200,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        activities: {
+          orderBy: { createdAt: 'asc' },
+          take: 1,
+          select: { createdAt: true },
+        },
+      },
+    });
+
+    const withContact = leads
+      .filter((l) => l.activities.length > 0)
+      .map((l) => {
+        const hoursToContact = (l.activities[0].createdAt.getTime() - l.createdAt.getTime()) / 3600000;
+        return Math.round(hoursToContact * 10) / 10;
+      });
+
+    const avg = withContact.length > 0
+      ? Math.round((withContact.reduce((s, h) => s + h, 0) / withContact.length) * 10) / 10
+      : 0;
+
+    const p90 = withContact.length > 0
+      ? withContact.sort((a, b) => a - b)[Math.floor(withContact.length * 0.9)]
+      : 0;
+
+    return {
+      averageHours: avg,
+      p90Hours: p90 ?? 0,
+      leadsWithContact: withContact.length,
+      leadsWithoutContact: leads.length - withContact.length,
+      total: leads.length,
+    };
+  }
+
+  async getPipelineVelocityTrend(weeks = 12, access?: Access) {
+    const data: { week: string; avgDays: number; count: number }[] = [];
+    for (let w = weeks - 1; w >= 0; w--) {
+      const end = new Date(Date.now() - w * 7 * 24 * 60 * 60 * 1000);
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const where: Record<string, unknown> = {
+        deletedAt: null, status: 'won',
+        closedAt: { gte: start, lte: end },
+      };
+      if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
+      const won = await this.prisma.lead.findMany({
+        where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+        select: { createdAt: true, closedAt: true },
+      });
+      const avgDays = won.length > 0
+        ? won.reduce((s, l) => s + (l.closedAt!.getTime() - l.createdAt.getTime()) / 86400000, 0) / won.length
+        : 0;
+      data.push({ week: start.toISOString().slice(0, 10), avgDays: parseFloat(avgDays.toFixed(1)), count: won.length });
+    }
+    return data;
+  }
+
+  async getStageConversionMatrix(pipelineId?: string, weeks = 8, access?: Access) {
+    const pipelines = pipelineId ? [{ id: pipelineId }] : await this.prisma.pipeline.findMany({ select: { id: true, name: true }, take: 1 });
+    const pid = pipelines[0]?.id;
+    if (!pid) return { stages: [], weeks: [], matrix: [] };
+    const stages = await this.prisma.pipelineStage.findMany({ where: { pipelineId: pid }, orderBy: { order: 'asc' }, select: { id: true, name: true } });
+    const weekLabels: string[] = [];
+    const matrix: Record<string, Record<string, number>> = {};
+    for (let w = weeks - 1; w >= 0; w--) {
+      const end = new Date(Date.now() - w * 7 * 24 * 60 * 60 * 1000);
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const weekLabel = start.toISOString().slice(0, 10);
+      weekLabels.push(weekLabel);
+      const histories = await this.prisma.leadStageHistory.groupBy({
+        by: ['toStageId'],
+        where: { enteredAt: { gte: start, lte: end }, lead: { pipelineId: pid, deletedAt: null } },
+        _count: { id: true },
+      });
+      for (const h of histories) {
+        if (!matrix[h.toStageId]) matrix[h.toStageId] = {};
+        matrix[h.toStageId][weekLabel] = h._count.id;
+      }
+    }
+    return {
+      stages: stages.map((s) => s.name),
+      weeks: weekLabels,
+      matrix: stages.map((s) => ({
+        stage: s.name,
+        values: weekLabels.map((w) => matrix[s.id]?.[w] ?? 0),
+      })),
+    };
+  }
+
+  async getLeadSourceTrend(weeks = 12, access?: Access) {
+    const trend: Record<string, { source: string; weeks: { week: string; count: number }[] }> = {};
+    for (let w = weeks - 1; w >= 0; w--) {
+      const end = new Date(Date.now() - w * 7 * 24 * 60 * 60 * 1000);
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const weekLabel = start.toISOString().slice(0, 10);
+      const where: Record<string, unknown> = { deletedAt: null, createdAt: { gte: start, lte: end } };
+      if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
+      const grouped = await this.prisma.lead.groupBy({
+        by: ['source'],
+        where: where as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+        _count: { id: true },
+      });
+      for (const g of grouped) {
+        const src = g.source ?? 'Direct';
+        if (!trend[src]) trend[src] = { source: src, weeks: [] };
+        trend[src].weeks.push({ week: weekLabel, count: g._count.id });
+      }
+    }
+    return Object.values(trend).sort((a, b) => {
+      const totalA = a.weeks.reduce((s, w) => s + w.count, 0);
+      const totalB = b.weeks.reduce((s, w) => s + w.count, 0);
+      return totalB - totalA;
+    }).slice(0, 6);
+  }
+
+  async getContactGrowthTrend(weeks = 12) {
+    const data: { week: string; new: number; cumulative: number }[] = [];
+    let cumulative = 0;
+    const existingBefore = await this.prisma.contact.count({
+      where: { createdAt: { lt: new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000) } },
+    });
+    cumulative = existingBefore;
+    for (let w = weeks - 1; w >= 0; w--) {
+      const end = new Date(Date.now() - w * 7 * 24 * 60 * 60 * 1000);
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const newContacts = await this.prisma.contact.count({ where: { createdAt: { gte: start, lte: end } } });
+      cumulative += newContacts;
+      data.push({ week: start.toISOString().slice(0, 10), new: newContacts, cumulative });
+    }
+    return data;
+  }
+
+  async getPipelineCoverageRatio(pipelineId?: string, access?: Access) {
+    const where: Record<string, unknown> = { deletedAt: null, status: { notIn: ['won', 'lost'] } };
+    if (pipelineId) where.pipelineId = pipelineId;
+    if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
+    const [pipeline, wonPrev] = await Promise.all([
+      this.prisma.lead.aggregate({
+        where: where as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+        _sum: { amount: true }, _count: { id: true },
+      }),
+      this.prisma.lead.aggregate({
+        where: { ...where, status: 'won', closedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+        _sum: { amount: true },
+      }),
+    ]);
+    const pipelineValue = pipeline._sum.amount ? Number(pipeline._sum.amount) : 0;
+    const revenueLastMonth = wonPrev._sum.amount ? Number(wonPrev._sum.amount) : 0;
+    const coverageRatio = revenueLastMonth > 0 ? pipelineValue / revenueLastMonth : null;
+    return { pipelineValue, openLeads: pipeline._count.id, revenueLastMonth, coverageRatio, coverageRatioFormatted: coverageRatio ? `${coverageRatio.toFixed(1)}x` : 'N/A' };
+  }
 }

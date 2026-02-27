@@ -67,6 +67,7 @@ model User {
   inviteToken       String?   @map("invite_token")
   inviteTokenExpires DateTime? @map("invite_token_expires")
   phone             String?   // E.164 for click-to-call
+  callMode          String?   @default("phone") @map("call_mode") // "phone" | "browser"
   role              Role      @relation(fields: [roleId], references: [id])
   team              Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
   activities        Activity[]  @relation("ActivityCreator")

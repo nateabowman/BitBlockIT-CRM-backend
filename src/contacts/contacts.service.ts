@@ -192,4 +192,50 @@ export class ContactsService {
     await this.prisma.contact.delete({ where: { id } });
     return { message: 'Contact permanently deleted' };
   }
+
+  /** GDPR Right to Erasure: anonymize all PII, keep record shell for audit */
+  async gdprErase(id: string, userId?: string) {
+    const contact = await this.prisma.contact.findUnique({ where: { id } });
+    if (!contact) throw new NotFoundException('Contact not found');
+    const hash = Buffer.from(contact.email ?? contact.id).toString('base64').slice(0, 12);
+    const anonymized = await this.prisma.contact.update({
+      where: { id },
+      data: {
+        firstName: '[ERASED]',
+        lastName: '[ERASED]',
+        email: `erased-${hash}@gdpr-deleted.invalid`,
+        phone: null,
+        notes: null,
+        linkedInUrl: null,
+        twitterUrl: null,
+        customFields: null,
+        unsubscribedAt: new Date(),
+      },
+    });
+    await this.audit.log({
+      userId,
+      resourceType: 'contact',
+      resourceId: id,
+      action: 'gdpr_erase',
+      meta: { reason: 'GDPR right to erasure request' },
+    });
+    return { message: 'Contact data erased per GDPR request', id };
+  }
+
+  async getLastContacted(id: string, access?: Access) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id, ...this.teamFilter(access) },
+    });
+    if (!contact) throw new NotFoundException('Contact not found');
+    const lastActivity = await this.prisma.activity.findFirst({
+      where: { contactId: id },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, type: true, subject: true },
+    });
+    return {
+      lastContactedAt: lastActivity?.createdAt ?? null,
+      lastActivityType: lastActivity?.type ?? null,
+      lastActivitySubject: lastActivity?.subject ?? null,
+    };
+  }
 }

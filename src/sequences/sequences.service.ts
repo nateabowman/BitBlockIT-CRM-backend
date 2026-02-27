@@ -464,4 +464,40 @@ export class SequencesService {
       });
     }
   }
+
+  async unenrollByLead(leadId: string) {
+    const updated = await this.prisma.sequenceEnrollment.updateMany({
+      where: { leadId, state: { in: ['active', 'paused'] } },
+      data: { state: 'completed' },
+    });
+    return { unenrolled: updated.count };
+  }
+
+  async getStepAnalytics(sequenceId: string) {
+    const seq = await this.prisma.sequence.findUnique({
+      where: { id: sequenceId },
+      include: { steps: { orderBy: { order: 'asc' }, include: { template: { select: { id: true, name: true } } } } },
+    });
+    if (!seq) return { data: { steps: [] } };
+    const enrollments = await this.prisma.sequenceEnrollment.findMany({
+      where: { sequenceId },
+      select: { currentStepIndex: true, state: true },
+    });
+    const stepStats = seq.steps.map((step) => {
+      const atStep = enrollments.filter((e) => e.currentStepIndex === step.order).length;
+      const completedPast = enrollments.filter((e) => e.currentStepIndex > step.order || e.state === 'completed').length;
+      return {
+        step: step.order,
+        type: step.type,
+        templateName: (step.template as { name?: string } | null)?.name ?? null,
+        delayMinutes: step.delayMinutes,
+        atStep,
+        completedPast,
+        dropOffRate: enrollments.length > 0
+          ? Math.round(((enrollments.length - completedPast - atStep) / enrollments.length) * 100)
+          : 0,
+      };
+    });
+    return { data: { steps: stepStats, totalEnrollments: enrollments.length } };
+  }
 }

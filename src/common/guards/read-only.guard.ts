@@ -1,18 +1,19 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
 import { JwtPayload } from '../decorators/current-user.decorator';
 
-@Injectable()
-export class WriteAccessGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+const READ_ONLY_ROLES = ['read-only', 'viewer'] as const;
 
+@Injectable()
+export class ReadOnlyGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
     const method = request.method?.toUpperCase();
     if (method === 'GET' || method === 'HEAD') return true;
     const user = request.user as JwtPayload | undefined;
     if (!user) return true;
-    if (user.role === 'viewer' || user.role === 'read-only') throw new ForbiddenException('Read-only role cannot perform this action');
+    if (READ_ONLY_ROLES.includes(user.role as typeof READ_ONLY_ROLES[number])) {
+      throw new ForbiddenException('Read-only role cannot perform write operations');
+    }
     return true;
   }
 }
