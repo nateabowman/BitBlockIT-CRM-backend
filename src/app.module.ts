@@ -1,6 +1,7 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -53,6 +54,7 @@ import { InMemoryCacheInterceptor } from './common/cache.interceptor';
 
 @Module({
   providers: [
+    { provide: APP_FILTER, useClass: SentryGlobalFilter },
     LoggerService,
     MetricsService,
     { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
@@ -62,6 +64,7 @@ import { InMemoryCacheInterceptor } from './common/cache.interceptor';
     RolesGuard,
   ],
   imports: [
+    SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ name: 'short', ttl: 60000, limit: 300 }]),
     ScheduleModule.forRoot(),
