@@ -99,6 +99,10 @@ async function bootstrap() {
   }
 
   const http = app.getHttpAdapter().getInstance();
+  // Handle GET / so bot probes (e.g. ?XDEBUG_SESSION_START=phpstorm) don't hit Nest's route resolver and crash the process
+  http.get('/', (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
+    res.status(404).send({ error: 'Not Found', message: 'API at /api/v1' });
+  });
   http.get('/health', async (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
     const dbOk = await app.get('PrismaService')?.prisma?.$queryRaw`SELECT 1`.then(() => true).catch(() => false) ?? true;
     res.status(200).send({
