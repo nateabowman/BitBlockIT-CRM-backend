@@ -59,6 +59,18 @@ export class LeadsController {
     return { data: await this.leadsService.importCsv(dto.rows, mapping, dto.pipelineId, dto.stageId) };
   }
 
+  @Get('needs-attention')
+  async needsAttention(@CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
+    return { data: await this.leadsService.getNeedsAttention(access) };
+  }
+
+  @Get('archived')
+  async archived(@CurrentUser() user?: JwtPayload) {
+    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
+    return { data: await this.leadsService.findArchived(access) };
+  }
+
   @Get(':id/export-data')
   async exportData(@Param('id') id: string, @Res() res: Response, @CurrentUser() user?: JwtPayload) {
     const access = user ? { role: user.role, teamId: user.teamId } : undefined;
@@ -278,12 +290,6 @@ export class LeadsController {
     return { data: await this.leadsService.setPriority(id, body.priority, userId, access) };
   }
 
-  @Get('needs-attention')
-  async needsAttention(@CurrentUser() user?: JwtPayload) {
-    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
-    return { data: await this.leadsService.getNeedsAttention(access) };
-  }
-
   @Post(':id/archive')
   async archive(@Param('id') id: string, @CurrentUser('sub') userId: string, @CurrentUser() user?: JwtPayload) {
     const access = user ? { role: user.role, teamId: user.teamId } : undefined;
@@ -296,12 +302,6 @@ export class LeadsController {
     return { data: await this.leadsService.restoreLead(id, userId, access) };
   }
 
-  @Get('archived')
-  async archived(@CurrentUser() user?: JwtPayload) {
-    const access = user ? { role: user.role, teamId: user.teamId, userId: user.sub } : undefined;
-    return { data: await this.leadsService.findArchived(access) };
-  }
-
   @Post(':id/deal-room')
   async setDealRoom(
     @Param('id') id: string,
@@ -311,12 +311,6 @@ export class LeadsController {
   ) {
     const access = user ? { role: user.role, teamId: user.teamId } : undefined;
     return { data: await this.leadsService.setPriority(id, null, userId, access) };
-  }
-
-  @Get(':id/score-history')
-  async scoreHistory(@Param('id') id: string, @CurrentUser() user?: JwtPayload) {
-    const access = user ? { role: user.role, teamId: user.teamId } : undefined;
-    return { data: await this.leadsService.getScoreHistory(id, access) };
   }
 
   @Post(':id/quick-note')
@@ -355,10 +349,5 @@ export class LeadsController {
     @CurrentUser('sub') userId: string,
   ) {
     return { data: await this.leadsService.addNote(id, body.content, body.isInternal ?? false, userId) };
-  }
-
-  @Get(':id/notes')
-  async getNotes(@Param('id') id: string) {
-    return { data: await this.leadsService.getNotes(id) };
   }
 }
