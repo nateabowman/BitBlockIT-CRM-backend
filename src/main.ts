@@ -7,9 +7,44 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import * as express from 'express';
 import * as compression from 'compression';
+import { Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { LoggerService } from './common/logger.service';
 import { MetricsService } from './common/metrics.service';
+
+let appPromise: ReturnType<typeof bootstrap> | null = null;
+
+async function getApp() {
+  if (!appPromise) appPromise = bootstrap();
+  return appPromise;
+}
+
+/**
+ * Vercel serverless handler. Exported so api/entry.js can require it.
+ */
+async function vercelHandler(req: Request, res: Response) {
+  try {
+    const app = await getApp();
+    const expressApp = app.getHttpAdapter().getInstance();
+    expressApp(req, res);
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'Unknown';
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[vercelHandler]', JSON.stringify({ error: name, message }));
+    if (!res.headersSent) {
+      res.status(500).setHeader('Content-Type', 'application/json').end(
+        JSON.stringify({
+          statusCode: 500,
+          error: 'Internal Server Error',
+          message: process.env.NODE_ENV === 'production' ? 'Service temporarily unavailable.' : message,
+        }),
+      );
+    }
+  }
+}
+
+export default vercelHandler;
+export { vercelHandler };
 
 async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
@@ -129,12 +164,18 @@ async function bootstrap() {
     res.status(200).send(await metricsService.getMetrics());
   });
 
-  const port = process.env.PORT || 3001;
-  await app.listen(port);
-  const logger = app.get(LoggerService);
-  logger.log(`Backend running at http://localhost:${port}/api/v1`, 'Bootstrap');
-  if (!isProd) logger.log(`API docs at http://localhost:${port}/api-docs`, 'Bootstrap');
-  logger.log(`Health check at http://localhost:${port}/health`, 'Bootstrap');
-  logger.log(`Metrics at http://localhost:${port}/metrics${metricsSecret ? ' (requires x-metrics-token)' : ''}`, 'Bootstrap');
+  if (!process.env.VERCEL) {
+    const port = process.env.PORT || 3001;
+    await app.listen(port);
+    const logger = app.get(LoggerService);
+    logger.log(`Backend running at http://localhost:${port}/api/v1`, 'Bootstrap');
+    if (!isProd) logger.log(`API docs at http://localhost:${port}/api-docs`, 'Bootstrap');
+    logger.log(`Health check at http://localhost:${port}/health`, 'Bootstrap');
+    logger.log(`Metrics at http://localhost:${port}/metrics${metricsSecret ? ' (requires x-metrics-token)' : ''}`, 'Bootstrap');
+  }
+  return app;
 }
-bootstrap();
+
+if (!process.env.VERCEL) {
+  bootstrap();
+}
