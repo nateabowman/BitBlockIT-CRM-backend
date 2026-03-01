@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, TooManyRequestsException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus } from '@nestjs/common';
 
 const loginAttempts = new Map<string, { count: number; lockedUntil?: number }>();
 const MAX_ATTEMPTS = 5;
@@ -16,7 +16,10 @@ export class BruteForceGuard implements CanActivate {
     const record = loginAttempts.get(key);
     if (record?.lockedUntil && record.lockedUntil > now) {
       const waitMinutes = Math.ceil((record.lockedUntil - now) / 60000);
-      throw new TooManyRequestsException(`Too many failed login attempts. Try again in ${waitMinutes} minute${waitMinutes !== 1 ? 's' : ''}.`);
+      throw new HttpException(
+        `Too many failed login attempts. Try again in ${waitMinutes} minute${waitMinutes !== 1 ? 's' : ''}.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     if (record?.lockedUntil && record.lockedUntil <= now) {
