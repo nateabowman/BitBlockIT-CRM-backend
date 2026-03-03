@@ -54,6 +54,34 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+  // CORS: set headers early so they are present even behind proxies that might strip them
+  const allowedOriginsList = (process.env.FRONTEND_URL || process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const knownOrigins = new Set([
+    'http://localhost:3000',
+    'https://crm.bitblockit.com',
+    'https://bit-block-it-crm.vercel.app',
+    ...allowedOriginsList,
+  ]);
+  app.use((req: Request, res: Response, next: () => void) => {
+    const origin = req.headers.origin;
+    if (origin && knownOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type,Authorization,X-Requested-With,Accept,Origin,Accept-Language',
+      );
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
   // Twilio webhooks: capture raw body for signature validation (must run before global body parser)
   const twilioVerify = (req: express.Request, _res: express.Response, buf: Buffer) => {
     (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
