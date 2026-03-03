@@ -335,7 +335,7 @@ export class ActivitiesService {
     const templates = (prefs.activityTemplates ?? []) as Record<string, unknown>[];
     const newTemplate = { id: Math.random().toString(36).slice(2), ...template, createdAt: new Date().toISOString() };
     const updated = [...templates, newTemplate];
-    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: updated } } });
+    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: updated } as object } });
     return newTemplate;
   }
 
@@ -381,7 +381,7 @@ export class ActivitiesService {
     const prefs = (user?.notificationPrefs ?? {}) as Record<string, unknown>;
     const templates = (prefs.activityTemplates ?? []) as Record<string, unknown>[];
     const filtered = templates.filter((t) => t.id !== id);
-    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: filtered } } });
+    await this.prisma.user.update({ where: { id: userId }, data: { notificationPrefs: { ...prefs, activityTemplates: filtered } as object } });
     return { message: 'Template deleted' };
   }
 }

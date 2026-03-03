@@ -336,77 +336,90 @@ export class WebhooksController {
         this.logger.log(`Billing: marked lead ${org.leads[0].id} as won`, 'WebhooksController');
       }
       // Item 342: Create billing activity
-      try {
-        await this.prisma.activity.create({
-          data: {
-            leadId: org.leads[0]?.id ?? undefined,
-            typeId: await this.getOrCreateActivityTypeId('billing_event'),
-            subject: `Invoice paid — $${((data.amount as number ?? 0) / 100).toFixed(2)}`,
-            status: 'completed',
-            completedAt: new Date(),
-          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
-        });
-      } catch { /* activity type may not exist */ }
+      const lead0 = org.leads[0];
+      if (lead0?.id && lead0?.assignedToId) {
+        try {
+          await this.prisma.activity.create({
+            data: {
+              leadId: lead0.id,
+              userId: lead0.assignedToId,
+              type: 'billing_event',
+              subject: `Invoice paid — $${((data.amount as number ?? 0) / 100).toFixed(2)}`,
+              completedAt: new Date(),
+            },
+          });
+        } catch { /* activity type may not exist */ }
+      }
     }
 
     // Item 338: invoice.overdue → create follow-up activity
     if (event === 'invoice.overdue') {
-      try {
-        await this.prisma.activity.create({
-          data: {
-            leadId: org.leads[0]?.id ?? undefined,
-            typeId: await this.getOrCreateActivityTypeId('billing_event'),
-            subject: `Invoice overdue — follow up required`,
-            dueDate: new Date(),
-            status: 'pending',
-          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
-        });
-        this.logger.log(`Billing: created overdue follow-up activity for org ${org.id}`, 'WebhooksController');
-      } catch (err) {
-        this.logger.warn(`Could not create activity: ${err}`, 'WebhooksController');
+      const lead0 = org.leads[0];
+      if (lead0?.id && lead0?.assignedToId) {
+        try {
+          await this.prisma.activity.create({
+            data: {
+              leadId: lead0.id,
+              userId: lead0.assignedToId,
+              type: 'billing_event',
+              subject: `Invoice overdue — follow up required`,
+              scheduledAt: new Date(),
+            },
+          });
+          this.logger.log(`Billing: created overdue follow-up activity for org ${org.id}`, 'WebhooksController');
+        } catch (err) {
+          this.logger.warn(`Could not create activity: ${err}`, 'WebhooksController');
+        }
       }
     }
 
     // Item 339: subscription.cancelled → update org, alert sales rep
     if (event === 'subscription.cancelled') {
       await this.prisma.organization.update({ where: { id: org.id }, data: { type: 'prospect' } });
-      try {
-        await this.prisma.inAppNotification.create({
-          data: {
-            message: `Subscription cancelled for ${org.name}`,
-            userId: org.leads[0]?.assignedToId ?? undefined,
-            resourceType: 'organization',
-            resourceId: org.id,
-          } as Parameters<typeof this.prisma.inAppNotification.create>[0]['data'],
-        });
-      } catch { /* field may differ */ }
+      const userId = org.leads[0]?.assignedToId;
+      if (userId) {
+        try {
+          await this.prisma.inAppNotification.create({
+            data: {
+              type: 'billing',
+              title: 'Subscription cancelled',
+              body: `Subscription cancelled for ${org.name}`,
+              user: { connect: { id: userId } },
+            },
+          });
+        } catch { /* field may differ */ }
+      }
     }
 
     // Item 341: payment.failed → in-app notification
     if (event === 'payment.failed') {
-      try {
-        await this.prisma.inAppNotification.create({
-          data: {
-            message: `Payment failed for ${org.name} — action required`,
-            userId: org.leads[0]?.assignedToId ?? undefined,
-            resourceType: 'organization',
-            resourceId: org.id,
-          } as Parameters<typeof this.prisma.inAppNotification.create>[0]['data'],
-        });
-      } catch { /* best effort */ }
+      const userId = org.leads[0]?.assignedToId;
+      if (userId) {
+        try {
+          await this.prisma.inAppNotification.create({
+            data: {
+              type: 'billing',
+              title: 'Payment failed',
+              body: `Payment failed for ${org.name} — action required`,
+              user: { connect: { id: userId } },
+            },
+          });
+        } catch { /* best effort */ }
+      }
     }
 
     // Item 342: subscription.created → log activity
-    if (event === 'subscription.created') {
+    const subLead = org.leads[0];
+    if (event === 'subscription.created' && subLead?.id && subLead?.assignedToId) {
       try {
         await this.prisma.activity.create({
           data: {
-            leadId: org.leads[0]?.id ?? undefined,
-            typeId: await this.getOrCreateActivityTypeId('billing_event'),
-            subject: `Subscription created`,
-            status: 'completed',
+            leadId: subLead.id,
+            userId: subLead.assignedToId,
+            type: 'billing_event',
+            subject: 'Subscription created',
             completedAt: new Date(),
-          } as Parameters<typeof this.prisma.activity.create>[0]['data'],
+          },
         });
       } catch { /* best effort */ }
     }
@@ -417,7 +430,8 @@ export class WebhooksController {
   private async getOrCreateActivityTypeId(name: string): Promise<string> {
     const type = await this.prisma.activityType.findFirst({ where: { name } });
     if (type) return type.id;
-    const created = await this.prisma.activityType.create({ data: { name, color: '#6366f1', icon: 'billing' } });
+    const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const created = await this.prisma.activityType.create({ data: { name, slug: slug || 'billing-event', color: '#6366f1', icon: 'billing' } });
     return created.id;
   }
 }

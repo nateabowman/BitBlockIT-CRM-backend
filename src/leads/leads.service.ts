@@ -374,20 +374,20 @@ export class LeadsService {
     return this.prisma.leadNote.findMany({
       where: { leadId: id },
       orderBy: { createdAt: 'desc' },
-      include: { author: { select: { id: true, name: true } } },
+      include: { user: { select: { id: true, name: true } } },
     });
   }
 
   async createNote(
     leadId: string,
     body: string,
-    authorId: string,
+    userId: string,
     access?: { role?: string; teamId?: string | null },
   ) {
     await this.findOne(leadId, access);
     return this.prisma.leadNote.create({
-      data: { leadId, body: body.trim(), authorId },
-      include: { author: { select: { id: true, name: true } } },
+      data: { leadId, body: body.trim(), userId },
+      include: { user: { select: { id: true, name: true } } },
     });
   }
 
@@ -405,8 +405,8 @@ export class LeadsService {
     if (!note) throw new NotFoundException('Note not found');
     return this.prisma.leadNote.update({
       where: { id: noteId },
-      data: { body: body.trim(), updatedAt: new Date() },
-      include: { author: { select: { id: true, name: true } } },
+      data: { body: body.trim() },
+      include: { user: { select: { id: true, name: true } } },
     });
   }
 
@@ -824,7 +824,7 @@ export class LeadsService {
         tags: { include: { tag: true } },
       },
     });
-    await this.audit.log({ userId, action: 'clone', resourceType: 'lead', resourceId: cloned.id, meta: { sourceId: id } });
+    await this.audit.log({ userId, action: 'clone', resourceType: 'lead', resourceId: cloned.id, newValue: { sourceId: id } });
     return cloned;
   }
 
@@ -860,7 +860,7 @@ export class LeadsService {
       where: { id },
       data: { customFields: updated },
     });
-    if (userId) await this.audit.log({ userId, action: 'set_priority', resourceType: 'lead', resourceId: id, meta: { priority } });
+    if (userId) await this.audit.log({ userId, action: 'set_priority', resourceType: 'lead', resourceId: id, newValue: { priority } });
     return lead;
   }
 
@@ -884,7 +884,7 @@ export class LeadsService {
     this.assertLeadAccess(lead as { assignedTo?: { teamId?: string | null } | null }, access);
     const cf = (lead.customFields as Record<string, unknown> | null) ?? {};
     const { archived: _a, archivedAt: _b, ...rest } = cf;
-    const updated = await this.prisma.lead.update({ where: { id }, data: { customFields: rest } });
+    const updated = await this.prisma.lead.update({ where: { id }, data: { customFields: rest as object } });
     await this.audit.log({ userId, action: 'restore', resourceType: 'lead', resourceId: id });
     return updated;
   }
@@ -904,17 +904,6 @@ export class LeadsService {
       take: 50,
       orderBy: { updatedAt: 'desc' },
       include: { currentStage: true, organization: true, assignedTo: { select: { id: true, name: true } } },
-    });
-  }
-
-  async getScoreHistory(id: string, access?: { role?: string; teamId?: string | null }) {
-    const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null }, select: { id: true, assignedTo: { select: { teamId: true } } } });
-    if (!lead) throw new NotFoundException('Lead not found');
-    this.assertLeadAccess(lead as { assignedTo?: { teamId?: string | null } | null }, access);
-    return this.prisma.leadScoreLog.findMany({
-      where: { leadId: id },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
     });
   }
 
@@ -941,30 +930,36 @@ export class LeadsService {
       orderBy: { createdAt: 'asc' },
     });
     if (logs.length < 2) return { isHot: false, scoreDelta: 0 };
-    const scoreDelta = logs[logs.length - 1].newScore - logs[0].previousScore;
+    const scoreDelta = logs[logs.length - 1].newScore - (logs[0].previousScore ?? 0);
     return { isHot: scoreDelta >= 20, scoreDelta, logsCount: logs.length };
   }
 
   async getDealVelocity(id: string) {
     const lead = await this.prisma.lead.findFirst({
       where: { id },
-      select: { createdAt: true, closedAt: true, status: true, stageHistory: { orderBy: { enteredAt: 'asc' }, include: { toStage: true } } },
+      select: {
+        createdAt: true,
+        closedAt: true,
+        status: true,
+        stageHistory: { orderBy: { enteredAt: 'asc' }, include: { stage: { select: { name: true } } } },
+      },
     });
     if (!lead) throw new NotFoundException('Lead not found');
     const daysTotal = lead.closedAt
       ? Math.floor((lead.closedAt.getTime() - lead.createdAt.getTime()) / 86400000)
       : Math.floor((Date.now() - lead.createdAt.getTime()) / 86400000);
+    const history = lead.stageHistory;
     return {
       daysTotal,
       isWon: lead.status === 'won',
       createdAt: lead.createdAt,
       closedAt: lead.closedAt,
-      stageVelocity: lead.stageHistory.map((h, i, arr) => {
+      stageVelocity: history.map((h: { enteredAt: Date; stage: { name: string } }, i: number, arr: { enteredAt: Date }[]) => {
         const next = arr[i + 1];
         const daysInStage = next
           ? Math.floor((next.enteredAt.getTime() - h.enteredAt.getTime()) / 86400000)
           : Math.floor((Date.now() - h.enteredAt.getTime()) / 86400000);
-        return { stage: h.toStage?.name ?? 'Unknown', daysInStage };
+        return { stage: h.stage?.name ?? 'Unknown', daysInStage };
       }),
     };
   }
@@ -1007,19 +1002,11 @@ export class LeadsService {
     return { read: true };
   }
 
-  async addNote(id: string, content: string, isInternal: boolean, userId: string) {
+  async addNote(id: string, content: string, _isInternal: boolean, userId: string) {
     const lead = await this.prisma.lead.findFirst({ where: { id, deletedAt: null } });
     if (!lead) throw new NotFoundException('Lead not found');
     return this.prisma.leadNote.create({
-      data: { leadId: id, body: content, isInternal, userId },
-      include: { user: { select: { id: true, name: true } } },
-    });
-  }
-
-  async getNotes(id: string) {
-    return this.prisma.leadNote.findMany({
-      where: { leadId: id },
-      orderBy: { createdAt: 'desc' },
+      data: { leadId: id, body: content, userId },
       include: { user: { select: { id: true, name: true } } },
     });
   }

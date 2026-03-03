@@ -1,4 +1,5 @@
 import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type Access = { role?: string; teamId?: string | null };
@@ -834,7 +835,7 @@ export class ReportsService {
     }
 
     const slipped = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       take: 50,
       orderBy: { expectedCloseAt: 'asc' },
       include: {
@@ -868,7 +869,7 @@ export class ReportsService {
     }
 
     const result = await this.prisma.lead.aggregate({
-      where: where as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       _sum: { amount: true },
       _count: { id: true },
     });
@@ -893,7 +894,7 @@ export class ReportsService {
 
     const grouped = await this.prisma.lead.groupBy({
       by: ['assignedToId'],
-      where: where as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       _count: { id: true },
     });
 
@@ -905,7 +906,7 @@ export class ReportsService {
 
     const wonGroups = await this.prisma.lead.groupBy({
       by: ['assignedToId'],
-      where: { ...where, status: 'won' } as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+      where: { ...where, status: 'won' } as Prisma.LeadWhereInput,
       _count: { id: true },
     });
 
@@ -959,7 +960,7 @@ export class ReportsService {
       };
     }
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       select: { id: true, source: true, status: true, amount: true, utmSource: true, utmMedium: true, utmCampaign: true },
     });
 
@@ -1049,7 +1050,7 @@ export class ReportsService {
       where.assignedTo = { teamId: access.teamId };
     }
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       select: { id: true, status: true, amount: true, customFields: true },
     });
 
@@ -1096,11 +1097,11 @@ export class ReportsService {
 
     const [wonLeads, totalLeads] = await Promise.all([
       this.prisma.lead.findMany({
-        where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+        where: where as Prisma.LeadWhereInput,
         select: { amount: true },
       }),
       this.prisma.lead.count({
-        where: { ...where, status: undefined, closedAt: undefined, createdAt: { gte: start, lte: end } } as Parameters<typeof this.prisma.lead.count>[0]['where'],
+        where: { ...where, status: undefined, closedAt: undefined, createdAt: { gte: start, lte: end } } as Prisma.LeadWhereInput,
       }),
     ]);
 
@@ -1124,17 +1125,17 @@ export class ReportsService {
       };
     }
     const [total, completed] = await Promise.all([
-      this.prisma.activity.count({ where: where as Parameters<typeof this.prisma.activity.count>[0]['where'] }),
-      this.prisma.activity.count({ where: { ...(where as Parameters<typeof this.prisma.activity.count>[0]['where']), completedAt: { not: null } } }),
+      this.prisma.activity.count({ where: where as Prisma.ActivityWhereInput }),
+      this.prisma.activity.count({ where: { ...(where as Prisma.ActivityWhereInput), completedAt: { not: null } } }),
     ]);
     const byUser = await this.prisma.activity.groupBy({
       by: ['userId'],
-      where: where as Parameters<typeof this.prisma.activity.groupBy>[0]['where'],
+      where: where as Prisma.ActivityWhereInput,
       _count: { id: true },
     });
     const completedByUser = await this.prisma.activity.groupBy({
       by: ['userId'],
-      where: { ...(where as Parameters<typeof this.prisma.activity.groupBy>[0]['where']), completedAt: { not: null } },
+      where: { ...(where as Prisma.ActivityWhereInput), completedAt: { not: null } },
       _count: { id: true },
     });
     const userIds = byUser.map((u) => u.userId);
@@ -1202,7 +1203,7 @@ export class ReportsService {
       where.assignedTo = { teamId: access.teamId };
     }
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       select: { status: true, amount: true, expectedCloseAt: true, closedAt: true },
     });
     const forecasted = leads.length;
@@ -1234,7 +1235,7 @@ export class ReportsService {
       };
     }
     const lostLeads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       include: {
         currentStage: true,
         organization: true,
@@ -1268,7 +1269,7 @@ export class ReportsService {
       };
     }
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       select: { id: true, lostReason: true, amount: true, source: true },
     });
     const byReason = leads.reduce((acc, l) => {
@@ -1298,7 +1299,7 @@ export class ReportsService {
       where.assignedTo = { teamId: access.teamId };
     }
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       select: { amount: true, organization: { select: { industry: true, type: true } }, customFields: true },
     });
     const grouped: Record<string, number> = {};
@@ -1330,7 +1331,7 @@ export class ReportsService {
     }
 
     const leads = await this.prisma.lead.findMany({
-      where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+      where: where as Prisma.LeadWhereInput,
       take: 200,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -1377,7 +1378,7 @@ export class ReportsService {
       };
       if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
       const won = await this.prisma.lead.findMany({
-        where: where as Parameters<typeof this.prisma.lead.findMany>[0]['where'],
+        where: where as Prisma.LeadWhereInput,
         select: { createdAt: true, closedAt: true },
       });
       const avgDays = won.length > 0
@@ -1401,13 +1402,15 @@ export class ReportsService {
       const weekLabel = start.toISOString().slice(0, 10);
       weekLabels.push(weekLabel);
       const histories = await this.prisma.leadStageHistory.groupBy({
-        by: ['toStageId'],
+        by: ['stageId'],
         where: { enteredAt: { gte: start, lte: end }, lead: { pipelineId: pid, deletedAt: null } },
         _count: { id: true },
       });
       for (const h of histories) {
-        if (!matrix[h.toStageId]) matrix[h.toStageId] = {};
-        matrix[h.toStageId][weekLabel] = h._count.id;
+        const stageId = h.stageId;
+        const count = h._count?.id ?? 0;
+        if (!matrix[stageId]) matrix[stageId] = {};
+        matrix[stageId][weekLabel] = count;
       }
     }
     return {
@@ -1430,7 +1433,7 @@ export class ReportsService {
       if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
       const grouped = await this.prisma.lead.groupBy({
         by: ['source'],
-        where: where as Parameters<typeof this.prisma.lead.groupBy>[0]['where'],
+        where: where as Prisma.LeadWhereInput,
         _count: { id: true },
       });
       for (const g of grouped) {
@@ -1469,11 +1472,11 @@ export class ReportsService {
     if (access?.role === 'sales_manager' && access?.teamId) where.assignedTo = { teamId: access.teamId };
     const [pipeline, wonPrev] = await Promise.all([
       this.prisma.lead.aggregate({
-        where: where as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+        where: where as Prisma.LeadWhereInput,
         _sum: { amount: true }, _count: { id: true },
       }),
       this.prisma.lead.aggregate({
-        where: { ...where, status: 'won', closedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } as Parameters<typeof this.prisma.lead.aggregate>[0]['where'],
+        where: { ...where, status: 'won', closedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } as Prisma.LeadWhereInput,
         _sum: { amount: true },
       }),
     ]);

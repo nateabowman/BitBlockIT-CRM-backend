@@ -205,10 +205,7 @@ export class ContactsService {
         lastName: '[ERASED]',
         email: `erased-${hash}@gdpr-deleted.invalid`,
         phone: null,
-        notes: null,
-        linkedInUrl: null,
-        twitterUrl: null,
-        customFields: null,
+        customFields: Prisma.JsonNull,
         unsubscribedAt: new Date(),
       },
     });
@@ -217,7 +214,7 @@ export class ContactsService {
       resourceType: 'contact',
       resourceId: id,
       action: 'gdpr_erase',
-      meta: { reason: 'GDPR right to erasure request' },
+      newValue: { reason: 'GDPR right to erasure request' },
     });
     return { message: 'Contact data erased per GDPR request', id };
   }

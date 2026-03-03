@@ -152,6 +152,7 @@ model Contact {
   formConfirmationTokens   FormConfirmationToken[]
   callRecords             CallRecord[]
   smsMessages             SmsMessage[]
+  assetDownloadLogs       AssetDownloadLog[]
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
@@ -270,6 +271,8 @@ model OptionList {
   order      Int      @default(0)
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([type, value])
   @@map("option_lists")
 }
 
@@ -370,11 +373,10 @@ model LeadNote {
   id        String   @id @default(cuid())
   leadId    String   @map("lead_id")
   body      String   @db.Text
-  authorId  String   @map("author_id")
+  userId    String   @map("user_id")
   lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([leadId])
   @@map("lead_notes")
@@ -412,6 +414,8 @@ model ActivityType {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  color     String?
+  icon      String?
   isTask    Boolean  @default(false) @map("is_task")
   order     Int      @default(0)
   createdAt DateTime @default(now()) @map("created_at")
@@ -743,6 +747,7 @@ model AssetDownloadLog {
   email      String?
   downloadedAt DateTime @default(now()) @map("downloaded_at")
   asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  contact    Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
   @@index([assetId])
   @@index([contactId])

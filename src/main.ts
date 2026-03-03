@@ -139,7 +139,10 @@ async function bootstrap() {
     res.status(404).send({ error: 'Not Found', message: 'API at /api/v1' });
   });
   http.get('/health', async (_req: unknown, res: { status: (n: number) => { send: (o: object) => void }; send: (o: object) => void }) => {
-    const dbOk = await app.get('PrismaService')?.prisma?.$queryRaw`SELECT 1`.then(() => true).catch(() => false) ?? true;
+    const prismaSvc = app.get('PrismaService') as { prisma?: { $queryRaw: (q: unknown) => Promise<unknown> } } | undefined;
+    const dbOk = prismaSvc?.prisma
+      ? await prismaSvc.prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false)
+      : true;
     res.status(200).send({
       status: 'ok',
       timestamp: new Date().toISOString(),

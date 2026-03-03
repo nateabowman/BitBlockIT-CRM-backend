@@ -67,7 +67,7 @@ export class AutomationService {
 
   private async saveStore(rules: AutomationRule[]) {
     await this.prisma.optionList.upsert({
-      where: { type__value: { type: '_automation_rules', value: '_store' } },
+      where: { type_value: { type: '_automation_rules', value: '_store' } },
       update: { label: JSON.stringify(rules) },
       create: { type: '_automation_rules', value: '_store', label: JSON.stringify(rules), order: 0 },
     });
@@ -215,7 +215,7 @@ export class AutomationService {
         } else {
           const lead = await this.prisma.lead.findUnique({ where: { id: leadId }, select: { customFields: true } });
           const cf = (lead?.customFields as Record<string, unknown> | null) ?? {};
-          await this.prisma.lead.update({ where: { id: leadId }, data: { customFields: { ...cf, [field]: value } } });
+          await this.prisma.lead.update({ where: { id: leadId }, data: { customFields: { ...cf, [field]: value } as object } });
         }
         break;
       }

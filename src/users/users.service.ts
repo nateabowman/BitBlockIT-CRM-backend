@@ -31,6 +31,7 @@ export class UsersService {
         id: true,
         email: true,
         name: true,
+        passwordHash: true,
         isActive: true,
         tokenVersion: true,
         teamId: true,

@@ -25,7 +25,7 @@ export class IntegrationsService {
 
   private async saveConfig(config: IntegrationConfig) {
     await this.prisma.optionList.upsert({
-      where: { type__value: { type: '_settings', value: SETTINGS_KEY } },
+      where: { type_value: { type: '_settings', value: SETTINGS_KEY } },
       update: { label: JSON.stringify(config) },
       create: { type: '_settings', value: SETTINGS_KEY, label: JSON.stringify(config), order: 0 },
     });
@@ -37,7 +37,7 @@ export class IntegrationsService {
 
   async update(section: keyof IntegrationConfig, data: Record<string, unknown>) {
     const config = await this.getConfig();
-    config[section] = { ...(config[section] ?? {} as Record<string, unknown>), ...data } as IntegrationConfig[typeof section];
+    (config as Record<string, unknown>)[section] = { ...(config[section] ?? {} as Record<string, unknown>), ...data };
     await this.saveConfig(config);
     return config[section];
   }

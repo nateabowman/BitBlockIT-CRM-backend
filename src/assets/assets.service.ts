@@ -107,12 +107,21 @@ export class AssetsService {
   async getAnalytics(id: string) {
     const asset = await this.prisma.asset.findUnique({
       where: { id },
-      select: { id: true, name: true, downloads: { orderBy: { downloadedAt: 'desc' }, take: 100, include: { contact: { select: { id: true, firstName: true, lastName: true, email: true } } } } },
+      select: {
+        id: true,
+        name: true,
+        downloads: {
+          orderBy: { downloadedAt: 'desc' },
+          take: 100,
+          include: { contact: { select: { id: true, firstName: true, lastName: true, email: true } } },
+        },
+      },
     });
     if (!asset) throw new Error('Asset not found');
-    const total = asset.downloads.length;
-    const uniqueContacts = new Set(asset.downloads.map((d) => d.contactId).filter(Boolean)).size;
-    const byDay = asset.downloads.reduce((acc, d) => {
+    const downloads = asset.downloads;
+    const total = downloads.length;
+    const uniqueContacts = new Set(downloads.map((d: { contactId: string | null }) => d.contactId).filter(Boolean)).size;
+    const byDay = downloads.reduce((acc: Record<string, number>, d: { downloadedAt: Date }) => {
       if (!d.downloadedAt) return acc;
       const day = d.downloadedAt.toISOString().slice(0, 10);
       acc[day] = (acc[day] || 0) + 1;
@@ -123,7 +132,7 @@ export class AssetsService {
       totalDownloads: total,
       uniqueContacts,
       byDay: Object.entries(byDay).map(([day, count]) => ({ day, count })).sort((a, b) => a.day.localeCompare(b.day)).slice(-30),
-      recentDownloads: asset.downloads.slice(0, 20).map((d) => ({
+      recentDownloads: downloads.slice(0, 20).map((d: { email: string | null; contact: { firstName: string; lastName: string; email: string } | null; downloadedAt: Date }) => ({
         email: d.email ?? d.contact?.email,
         contactName: d.contact ? `${d.contact.firstName} ${d.contact.lastName}` : null,
         downloadedAt: d.downloadedAt,
