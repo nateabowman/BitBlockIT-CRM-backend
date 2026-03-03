@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { LoggerService } from '../common/logger.service';
+
+const DB_PING_TIMEOUT_MS = 5_000;
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private logger: LoggerService,
+  ) {}
 
   async getStats() {
     const [
@@ -70,11 +76,31 @@ export class AdminService {
   }
 
   async getHealth(): Promise<{ connected: boolean; message: string }> {
+    this.logger.log('Admin health: DB ping started', 'AdminService');
+    const ping = this.prisma.$queryRaw`SELECT 1`;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('DB_PING_TIMEOUT')), DB_PING_TIMEOUT_MS),
+    );
     try {
-      await this.prisma.$queryRaw`SELECT 1`;
+      await Promise.race([ping, timeout]);
+      this.logger.log('Admin health: DB ping OK', 'AdminService');
       return { connected: true, message: 'PostgreSQL database connected successfully.' };
     } catch (err: unknown) {
+      const isTimeout = err instanceof Error && err.message === 'DB_PING_TIMEOUT';
+      if (isTimeout) {
+        this.logger.warn(`Admin health: DB ping timed out after ${DB_PING_TIMEOUT_MS / 1000}s`, 'AdminService');
+        return {
+          connected: false,
+          message: `Database ping timed out after ${DB_PING_TIMEOUT_MS / 1000}s`,
+        };
+      }
       const message = err instanceof Error ? err.message : 'Unknown error';
+      const code = err && typeof (err as NodeJS.ErrnoException).code === 'string' ? (err as NodeJS.ErrnoException).code : undefined;
+      const name = err instanceof Error ? err.name : 'Unknown';
+      this.logger.warn(
+        `Admin health: DB ping failed — name=${name} message=${message}${code ? ` code=${code}` : ''}`,
+        'AdminService',
+      );
       const hint =
         /ECONNREFUSED|ETIMEDOUT|connection refused|timeout/i.test(message) &&
         process.env.DATABASE_URL?.includes('bitblockit.com')
