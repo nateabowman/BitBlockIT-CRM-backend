@@ -75,7 +75,15 @@ export class AdminService {
       return { connected: true, message: 'PostgreSQL database connected successfully.' };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      return { connected: false, message: `Database connection failed: ${message}` };
+      const hint =
+        /ECONNREFUSED|ETIMEDOUT|connection refused|timeout/i.test(message) &&
+        process.env.DATABASE_URL?.includes('bitblockit.com')
+          ? ' If the API and Postgres run on the same server, set DATABASE_URL to use localhost (see .env.example).'
+          : '';
+      return {
+        connected: false,
+        message: `Database connection failed: ${message}${hint}`,
+      };
     }
   }
 
