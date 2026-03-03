@@ -44,6 +44,18 @@ When the API and PostgreSQL run on the **same server**, the CRM may show "Databa
 
 4. In the CRM, open **Admin → System Health**. Database should show "✓ Connected".
 
+## CORS and Vercel
+
+The API allows these origins by default: `http://localhost:3000`, `https://crm.bitblockit.com`, and `https://bit-block-it-crm.vercel.app`. No extra config is needed for the Vercel app.
+
+If the browser reports **CORS** and **504 Gateway Time-out** together, the response is often coming from the reverse proxy (e.g. nginx) because the backend did not respond in time. Proxies usually do not add CORS headers to error pages. Fix the 504 first:
+
+- Ensure the **backend process** on the server is running and is the latest build (so CORS defaults are in effect).
+- Use **localhost** in `DATABASE_URL` when the API and Postgres are on the same server (see "Production / same-server" above).
+- If you use nginx, increase timeouts if the backend is slow, and ensure OPTIONS and API requests are proxied to the Nest app.
+
+To allow more origins (e.g. custom Vercel preview URLs), set `ALLOWED_ORIGINS` in `.env` (comma-separated). See `.env.example`.
+
 ## Repo history
 
 This repo was split out from the main BitBlockIT-CRM monorepo. The original backend lived at `BitBlockIT-CRM/backend/`.
